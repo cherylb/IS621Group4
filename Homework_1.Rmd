@@ -1,0 +1,238 @@
+---
+title: "DATA 621 - Homework #1"
+author: "Cheryl Bowersox, Christopher Martin, Robert Sellers, Edwige Talla Badjio"
+date: "June 19, 2016"
+output:
+  pdf_document:
+    fig_caption: yes
+    highlight: pygments
+    latex_engine: xelatex
+    number_sections: yes
+    toc: yes
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pygments
+    number_sections: yes
+    theme: united
+    toc: yes
+csl: mee.csl
+title2: Multiple Linear Regression
+---
+
+```{r message=FALSE, echo=FALSE}
+
+#install packages
+#this will not be shown
+
+suppressWarnings(library(faraway))
+suppressWarnings(library(ggplot2))
+suppressWarnings(library(lubridate))
+library(dplyr)
+library(tidyr)
+library(RCurl)
+library(rjson)
+library(gridExtra)
+library(lattice)
+
+#load data
+trainingdata <- read.csv("https://raw.githubusercontent.com/RobertSellers/dataWarehouse/master/moneyball-training-data.csv", header=TRUE)
+#removing Index
+trainingdata<-trainingdata%>%select(-INDEX)
+evaluationData <-read.csv("https://raw.githubusercontent.com/RobertSellers/dataWarehouse/master/moneyball-evaluation-data.csv", header=TRUE)
+```
+
+#OBJECTIVE
+
+To build an optimal multiple linear regression model for annual number of wins per team based on predictors. The following is a procedure for the selection of three different regression models and the selection of a preferred method.  The data source is of data statistics.
+
+
+
+***
+
+
+#DATA EXPLORATION
+
+```{r echo= FALSE, message=FALSE}
+n<-nrow(trainingdata)
+meanData<-mean(trainingdata$TARGET_WINS)
+sdData<-sd(trainingdata$TARGET_WINS)
+
+```
+
+The data has `r nrow(trainingdata)` rows, with each record representing a professional baseball team from the years 1871 to 2006 inclusive. Each record
+has the performance of the team for the given year, with all of the statistics adjusted to match the performance of a 162 game season.
+
+The response variable is the number of wins, or TARGET_WINS, which has an approximate mean of `r round(meanData,1)` and standard deviation of `r round(sdData,1)`. It follows a relatively normal, uniform distribution and we will assume there are no outliers.
+
+
+```{r echo=FALSE}
+old.par <- par(mfrow=c(1, 2))
+plot(trainingdata$TARGET_WINS, main="Total Wins Distribution",ylab="Total Wins")
+hist(trainingdata$TARGET_WINS,main="Total Wins Histogram",xlab="Total Wins")
+par(old.par)
+
+#Cheryl Plots
+#Density Plots - looking at distribution of interesting variables
+
+g1 <- ggplot(data = trainingdata, aes(x = TARGET_WINS) )+ 
+  geom_density(alpha = .2, fill = "003333")+
+  ggtitle("Target Wins")
+
+
+g2 <- ggplot(data = trainingdata, aes(x = TEAM_BATTING_H) )+ 
+  geom_density(alpha = .2, fill = "#CC6666")+
+  ggtitle("Base hits by batters")
+
+
+g3 <- ggplot(data = trainingdata, aes(x = TEAM_BATTING_BB) )+ 
+  geom_density(alpha = .2, fill = "#66CC00")+
+  ggtitle("Walks by Batters")
+
+g4 <- ggplot(data = trainingdata, aes(x = TEAM_PITCHING_HR) )+ 
+  geom_density(alpha = .2, fill = "#9933CC")+
+  ggtitle("Home Runs Allowed")
+
+grid.arrange(g1,g2,g3,g4, ncol=2, top ="Density Plots")
+
+#Box Plots
+
+g1<- ggplot(data = trainingdata, aes(x=1, y = TARGET_WINS)) + geom_boxplot(fill = "white", colour = "#3399CC", 
+                                                outlier.colour = "red", outlier.shape = 1)+
+  xlab("") + ylab("wins") +
+  ggtitle("Wins")
+
+g2<- ggplot(data = trainingdata, aes(x=2, y = TEAM_BATTING_H)) + geom_boxplot(fill = "white", colour = "#CC6666", 
+                                                         outlier.colour = "blue", outlier.shape = 1)+
+  xlab("") + ylab("Batting H") +
+  ggtitle("Base hits by batters")
+
+g3<- ggplot(data = trainingdata, aes(x=2, y = TEAM_BATTING_BB)) + geom_boxplot(fill = "white", colour = "#66CC00", 
+                                                            outlier.colour = "red", outlier.shape = 1)+
+  xlab("") + ylab("Walks") +
+  ggtitle("Walks by Batters")
+
+g4<- ggplot(data = trainingdata, aes(x=2, y = TEAM_PITCHING_HR)) + geom_boxplot(fill = "white", colour = "#9933CC", 
+                                                           outlier.colour = "red", outlier.shape = 1)+
+  xlab("") + ylab("HR allowed") +
+  ggtitle("Pitching - HR Allowed")
+
+
+grid.arrange(g1,g2,g3,g4, ncol=2, top ="Boxplots")
+
+```
+
+The explanatory/predictor variables are the remaining variables that may have a positive or negative impact on the number of wins. 
+
+#DATA PREPARATION 
+
+There are several NAs which appear to be values that should have a 0 value (for example, it is perfectly valid for there to be no field double plays in a given match, or no batters hit by pitch in a given match):
+
+```{r}
+trainingdata[is.na(trainingdata)] <- 0
+#this instead?  Other than this, we just run the models to not include NA?
+#trainingdata$TEAM_BASERUN_CS[is.na(trainingdata)] <- 0
+```
+
+For columns with values for HBP (hit by pitch) and DP (double plays), the minimum values are >0 and there are a large number of missing values (10% of DP's and 92% of HBP's). While many of these values could very well be missing, it is highly likely that there are 0 values. To simplify this process, a value of 0 has been given to these missing values, while other columns containing missing values (CS, SB, SO) are removed from once the model is run.
+
+```{r}
+#Perhaps only changing those without 0 values to 0 values, then removing the rest when the model runs
+trainingdata$TEAM_BATTING_HBP[is.na(trainingdata$TEAM_BATTING_HBP)] <- 0
+trainingdata$TEAM_FIELDING_DP[is.na(trainingdata$TEAM_FIELDING_DP)] <- 0
+
+#in TEAM_BASERUN_SB there are only 2 0 values (2 matches with no stolen bases), with the next lowest being 14 stolen bases, and 131 missing values
+trainingdata$TEAM_BASERUN_SB[is.na(trainingdata$TEAM_BASERUN_SB)] <- 0
+
+#in TEAM_BASERUN_CS there is only 1 0 values (1 match with a caught stealing), with the next lowest being 7 caught, and 772 missing values
+trainingdata$TEAM_BASERUN_CS [is.na(trainingdata$TEAM_BASERUN_CS)] <- 0
+
+#in TEAM_BASERUN_SB there is only 1 0 values (1 match with a caught stealing), with the next lowest being 7 caught, and 772 missing values
+trainingdata$TEAM_BASERUN_SB[is.na(trainingdata$TEAM_BASERUN_SB)] <- 0
+
+#in TEAM_PITCHING_SO and BATTING_SO there are 20 0 values (20 matches with strikeouts), with the next lowest being 181/66 strikeouts, and 102 missing values -- likely missing values (not 0)
+```
+
+Additionally, since (in baseball) the attacking team is the team whose turn it is at bat it might be interesting to see their success rates for those occurrences where a successful hit-at-bat occurs:
+
+```{r}
+'add column for total non-homerun hits (all base hits)'
+trainingdata$TEAM_BATTING_HITSBASE <- trainingdata$TEAM_BATTING_H + trainingdata$TEAM_BATTING_2B + trainingdata$TEAM_BATTING_3B
+
+'add column for all base situations'
+trainingdata$TEAM_BATTING_ALLBASE <- trainingdata$TEAM_BATTING_H + trainingdata$TEAM_BATTING_2B + trainingdata$TEAM_BATTING_3B + trainingdata$TEAM_BATTING_BB + trainingdata$TEAM_BATTING_HBP
+
+#TEAM_BATTING_H was reduced to become TEAM_BATTING_1B, as the combination of base hits simplifies hits unnecessarily. These data points are best split, as they exist for doubles, triples, and home runs.
+
+trainingdata$TEAM_BATTING_1B<-trainingdata$TEAM_BATTING_H- trainingdata$TEAM_BATTING_2B- trainingdata$TEAM_BATTING_3B- trainingdata$TEAM_BATTING_HR
+
+#TOTAL_BASES'
+trainingdata$TOTAL_BASES<-(trainingdata$TEAM_BATTING_2B*2)+(trainingdata$TEAM_BATTING_3B*3)+(trainingdata$TEAM_BATTING_HR*4)+ trainingdata$TEAM_BASERUN_SB+trainingdata$TEAM_BATTING_BB+trainingdata$TEAM_BATTING_1B
+
+#add column for all positive batting situations (base + homerun)'
+trainingdata$TEAM_BATTING_ALLPOS <- trainingdata$TEAM_BATTING_H + trainingdata$TEAM_BATTING_BB + trainingdata$TEAM_BATTING_HBP
+
+#add column for all positive attacking situations (base + homerun + steals)'
+trainingdata$TEAM_BATTING_ALLPOSATTCK <- trainingdata$TEAM_BATTING_H + trainingdata$TEAM_BATTING_2B + trainingdata$TEAM_BATTING_3B + trainingdata$TEAM_BATTING_HR + trainingdata$TEAM_BATTING_BB + trainingdata$TEAM_BATTING_HBP + trainingdata$TEAM_BASERUN_SB
+```
+
+There is also another team playing: the defending team. The defending team is mostly effective with the pitcher, so some added variables for pitching could be interesting:
+
+```{r}
+'add column for negative pitches (bases)'
+trainingdata$TEAM_PITCHING_BASESGIVEN <- trainingdata$TEAM_PITCHING_H + trainingdata$TEAM_PITCHING_BB
+
+'add column for negative pitching (bases + HRs given)'
+trainingdata$TEAM_PITCHING_BASESGIVEN <- trainingdata$TEAM_PITCHING_H + trainingdata$TEAM_PITCHING_BB + trainingdata$TEAM_PITCHING_HR
+
+'add column for success in offence vs failures in pitching'
+trainingdata$TEAM_POSRATIO <- trainingdata$TEAM_BATTING_ALLPOSATTCK / trainingdata$TEAM_PITCHING_BASESGIVEN
+```
+
+Stolen Bases and caught stolen would be better combined into "Stolen Base Percentage".
+
+```{r}
+trainingdata$SBPERCENT<-trainingdata$TEAM_BASERUN_SB/
+(trainingdata$TEAM_BASERUN_SB+trainingdata$TEAM_BASERUN_CS)
+trainingdata$TEAM_BASERUN_SB<-NULL
+trainingdata$TEAM_BASERUN_CS<-NULL
+```
+
+
+
+
+***
+
+#BUILD MODELS
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+#Multiple linear regression using stepwise methodology
+trainingdata<-na.omit(trainingdata)
+all<-lm(TARGET_WINS~.,trainingdata)
+all<-update(all,~.-INDEX)
+null=lm(TARGET_WINS~1, data=trainingdata)
+stepResults<-step(null,scope=list(lower=null,upper=all),direction="forward")
+stepResults
+```
+
+Current optimal results from stepwise method
+
+```{r}
+stepResults
+```
+
+
+
+
+
+
+***
+
+#SELECT MODELS 
+
+
+
+
+***
+
+#APPENDIX
