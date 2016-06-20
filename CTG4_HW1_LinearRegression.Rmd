@@ -1,0 +1,571 @@
+---
+title: "DATA 621 - Homework 1"
+author: "Cheryl Bowersox, Christopher Martin, Robert Sellers, Edwige Talla Badjio"
+date: "June 19, 2016"
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pygments
+    number_sections: yes
+    theme: united
+    toc: yes
+  pdf_document:
+    fig_caption: yes
+    highlight: pygments
+    latex_engine: xelatex
+    number_sections: yes
+    toc: yes
+csl: mee.csl
+title2: Multiple Linear Regression
+---
+
+```{r message=FALSE, echo=FALSE}
+
+#install packages
+#this will not be shown
+
+suppressWarnings(library(faraway))
+suppressWarnings(library(ggplot2))
+suppressWarnings(library(lubridate))
+library(dplyr)
+library(tidyr)
+library(RCurl)
+library(rjson)
+library(gridExtra)
+library(lattice)
+library(reshape2)
+
+#load data
+trainingdata <- read.csv("https://raw.githubusercontent.com/RobertSellers/dataWarehouse/master/moneyball-training-data.csv", header=TRUE)
+#remove index
+trainingdata<-trainingdata%>%select(-INDEX)
+originaldata<-trainingdata
+evaluationData <-read.csv("https://raw.githubusercontent.com/RobertSellers/dataWarehouse/master/moneyball-evaluation-data.csv", header=TRUE)
+
+
+originaldata<-trainingdata
+
+percent <- function(x, digits = 2, format = "f", ...) {
+  paste0(formatC(100 * x, format = format, digits = digits, ...), "%")
+}
+
+```
+
+
+#OBJECTIVE
+
+To build an optimal multiple linear regression model for annual number of wins per team based on predictor values. The data is an annual record of baseball wins per team along with their respective explanatory statistics. The following paper outlines a procedure for the creation of three experimental regression models and explain the selection process of an optimal method. 
+
+
+
+***
+
+
+#DATA EXPLORATION
+
+##Summary statistics
+
+```{r echo= FALSE, message=FALSE}
+nAttr<-ncol(trainingdata)#Number of attributes
+n<-nrow(trainingdata)#Number of observations
+meanData<-mean(trainingdata$TARGET_WINS)#Response Variable / Wins mean     
+sdData<-sd(trainingdata$TARGET_WINS)#Response Variable / Wins standard deviation
+```
+
+The data has `r nrow(trainingdata)` rows, with each record representing a professional baseball team from the years 1871 to 2006 inclusive. Each record has the performance of the team for the given year, with all of the statistics adjusted to match the performance of a 162 game season.
+
+The data has `r ncol(trainingdata)-1` attributes, of which `r ncol(trainingdata)-2` represent our predictor variables comprised of annual hitting, pitching, baserunning, and fielding statistics. Additional predictor variables are created and this is explained in section 3.
+
+The response variable is the number of wins, or *TARGET_WINS*, which has a mean of `r round(meanData,1)` and standard deviation of `r round(sdData,1)`. It follows a relatively normal, uniform distribution and we will not treat any values as outliers.
+
+
+```{r message=FALSE, echo=FALSE}
+old.par <- par(mfrow=c(1, 2))
+plot(trainingdata$TARGET_WINS, main="Total Wins Distribution",ylab="Total Wins",pch=".", col="darkgrey")
+abline(h=meanData, col="red",lty=2)
+abline(h=meanData+sdData, col="blue",lty=2)
+abline(h=meanData-sdData, col="blue",lty=2)
+abline(h=meanData+(sdData*2), col="blue",lty=2)
+abline(h=meanData-(sdData*2), col="blue",lty=2)
+text(x=400, y=meanData, "mean", col="black")
+text(x=400, y=meanData+sdData+5, "+1 SD", col="black")
+text(x=400, y=meanData-sdData-5, "-1 SD", col="black")
+text(x=400, y=meanData+(sdData*2)+5, "+2 SD", col="black")
+text(x=400, y=meanData-(sdData*2)-5, "-2 SD", col="black")
+hist(trainingdata$TARGET_WINS,main="Total Wins Histogram",xlab="Total Wins")
+par(old.par)
+
+
+```
+
+Predictive variables are much more diverse in shape and distribution (see graphical series below). The explanatory/predictor variables are the remaining variables that may have a positive or negative impact on the number of wins.
+##Correlations in the data
+Correlations between variables were calculated, with particular interest to those > 5. One interesting result is the TARGET_WINS variable is not strongly correlated with the data, but the the pitching and batting home runs are very strongly related.
+ 
+```{r echo=FALSE}
+cor_mat <- as.matrix(cor(trainingdata))
+cor_mat_melt <- arrange(melt(cor_mat), -abs(value))
+dplyr::filter(cor_mat_melt, value > .5)
+```
+
+##Data Visualization
+Some predictor variables were chosen to evaluate the outliers and distribution of the data. The high number of 'outliers' may indicate a need for data transformations. In this case the base hits by batter and the field errors have a large amount of variability in the data. 
+
+```{r echo=FALSE}
+
+#Cheryl Plots
+#Box Plots of predictors - outliers
+
+g1<- ggplot(data = trainingdata, aes(x=1, y = TEAM_BATTING_H)) + geom_boxplot(fill = "white", colour = "#3399CC", outlier.colour = "red", outlier.shape = 1) + xlab("") + ylab("Base Hits") +
+  ggtitle("Base Hits by Batter")
+
+g2<- ggplot(data = trainingdata, aes(x=1, y = TEAM_BATTING_SO)) + geom_boxplot(fill = "white", colour = "#3399CC", outlier.colour = "red", outlier.shape = 1) + xlab("") + ylab("Batter Strike Out") +
+  ggtitle("Batter Strike Outs")
+g3<- ggplot(data = trainingdata, aes(x=1, y = TEAM_FIELDING_E)) + geom_boxplot(fill = "white", colour = "#3399CC", outlier.colour = "red", outlier.shape = 1) + xlab("") + ylab("Fielding Errors") +
+  ggtitle("Fielding Errors")
+g4<- ggplot(data = trainingdata, aes(x=1, y = TEAM_PITCHING_HR)) + geom_boxplot(fill = "white", colour = "#3399CC", outlier.colour = "red", outlier.shape = 1) + xlab("") + ylab("Pitching HR") +
+  ggtitle("Pitching Home Runs")
+
+grid.arrange(g1,g2,g3,g4, ncol=2, top ="Boxplots")
+
+```
+
+##Missing Values
+
+Present in the data were some concerns, namely with missing data. In its entirety there are `r table(is.na(trainingdata))[2]` missing fields. This amounts to `r percent(table(is.na(trainingdata))[2]/(nrow(trainingdata)*ncol(trainingdata)))` of the data available. The following graphic shows a high completeness disparity between our values. This will be discussed in greater detail and resolved in section 3 of this document. 
+
+
+```{r echo=FALSE}
+a <- 0:n
+op <- par(mar = c(3,10,4,5))
+barplot(sort(sapply(trainingdata, function(x) sum(is.na(x)))),horiz=T,las=1,main="Missing Value Frequencies",xlim=c(0,n))
+mtext("Variable Name", side = 4)
+mtext("Frequency", side=3)
+abline(v=a[seq(1, length(a), 500)], col="grey", lty=2)
+box()
+par(op) ## reset
+```
+
+
+
+#DATA PREPARATION 
+
+For columns with values for HBP (hit by pitch) and DP (double plays), the minimum values are >0 and there are a large number of missing values (10% of DP and 92% of HBP). While many of these values could very well be missing, it is unreasonable to believe that there are 0 values. To simplify this process, a value of 0 has been given to these missing values for the purposes of calculation for new columns, then will be removed with other columns containing missing values (CS, SB, SO) before the model is run.
+
+```{r echo=FALSE}
+trainingdata$TEAM_BATTING_HBP[is.na(trainingdata$TEAM_BATTING_HBP)] <- 0
+trainingdata$TEAM_FIELDING_DP[is.na(trainingdata$TEAM_FIELDING_DP)] <- 0
+
+```
+##Columns added
+
+Additionally, since (in baseball) the attacking team is the team whose turn it is at bat it might be interesting to see their success rates for those occurrences where a successful hit-at-bat occurs:
+
+-  *TEAM_BATTING_1B* was deduced from *TEAM_BATTING_H*, as the number of singles, calculated through subtracting *TEAM_BATTING_3B*, *TEAM_BATTING_HR*, and *TEAM_BATTING_2B* from *TEAM_BATTING_H*.
+```{r echo=FALSE}
+trainingdata$TEAM_BATTING_1B<-trainingdata$TEAM_BATTING_H- trainingdata$TEAM_BATTING_2B- trainingdata$TEAM_BATTING_3B- trainingdata$TEAM_BATTING_HR
+```
+-  *TOTAL_BASES* was added to show the produce of total bases achieved after successfully reaching base, summed together per annual results per team. For instance a triple (TEAM_BATTING_3B) is 3 bases and a walk (TEAM_BATTING_BB) is 1 base, while caught stealing (TEAM_BASERUN_CS) will detract a base. 
+```{r echo=FALSE}
+temp1B<-trainingdata$TEAM_BATTING_1B;temp1B[is.na(temp1B)]<-0
+temp2B<-trainingdata$TEAM_BATTING_2B*2;temp2B[is.na(temp2B)]<-0
+temp3B<-trainingdata$TEAM_BATTING_3B*3;temp3B[is.na(temp3B)]<-0
+tempHR<-trainingdata$TEAM_BATTING_HR*4;tempHR[is.na(tempHR)]<-0
+tempSB<-as.numeric(trainingdata$TEAM_BASERUN_SB);tempSB[is.na(tempSB)]<-0
+tempCS<-trainingdata$TEAM_BASERUN_CS*-1;tempCS[is.na(tempCS)]<-0
+tempBB<-as.numeric(trainingdata$TEAM_BATTING_BB);tempBB[is.na(tempBB)]<-0
+tempHBP<-as.numeric(trainingdata$TEAM_BATTING_HBP);tempHBP[is.na(tempHBP)]<-0
+trainingdata$TOTAL_BASES_A<-temp1B+temp2B+temp3B+tempHR+tempSB+tempCS+tempBB+tempHBP
+```
+-  *TEAM_BATTING_HITSBASE* was added to show positive attacking at bat situations (base hits + homeruns + hit by pitch)
+```{r echo=FALSE}
+trainingdata$TEAM_BATTING_HITSBASE <- trainingdata$TEAM_BATTING_H + trainingdata$TEAM_BATTING_2B + trainingdata$TEAM_BATTING_3B
+```
+-  *TEAM_BATTING_ALLPOS* was added to show positive attacking situations in batting and stolen bases
+```{r echo=FALSE}
+trainingdata$TEAM_BATTING_ALLPOS <- trainingdata$TEAM_BATTING_H + trainingdata$TEAM_BATTING_BB + trainingdata$TEAM_BATTING_HBP
+```
+-  *TEAM_BATTING_ALLPOSATTCK* was added to show the number of positive attacking situations
+
+```{r echo=FALSE}
+trainingdata$TOTAL_BASES_B<-(trainingdata$TEAM_BATTING_2B*2)+(trainingdata$TEAM_BATTING_3B*3)+(trainingdata$TEAM_BATTING_HR*4)+ trainingdata$TEAM_BASERUN_SB+trainingdata$TEAM_BATTING_BB+trainingdata$TEAM_BATTING_1B
+
+trainingdata$TEAM_BATTING_ALLPOSATTCK <- trainingdata$TEAM_BATTING_H + trainingdata$TEAM_BATTING_2B + trainingdata$TEAM_BATTING_3B + trainingdata$TEAM_BATTING_HR + trainingdata$TEAM_BATTING_BB + trainingdata$TEAM_BATTING_HBP + trainingdata$TEAM_BASERUN_SB
+```
+
+
+The defending team is mostly effective with the pitcher, so some added variables for pitching could be interesting:
+
+-  *TEAM_PITCHING_BADPITCH* was added for negative base pitching situations: hits off a pitch + walks allowed
+-  *TEAM_PITCHING_BASESGIVEN* was added for negative pitching situations: hits off a pitch + walks allowed + HRs given
+-  *TEAM_PITCHRATIO* was as a relationship between negative pitching outcomes (HR) and positive pitching outcomes (SO)
+
+```{r echo=FALSE}
+trainingdata$TEAM_PITCHING_BADPITCH <- trainingdata$TEAM_PITCHING_H + trainingdata$TEAM_PITCHING_BB
+
+trainingdata$TEAM_PITCHING_BASESGIVEN <- trainingdata$TEAM_PITCHING_H + trainingdata$TEAM_PITCHING_BB + trainingdata$TEAM_PITCHING_HR
+
+trainingdata$TEAM_PITCHRATIO <- trainingdata$TEAM_PITCHING_HR / trainingdata$TEAM_PITCHING_SO
+```
+
+Other columns were added to see a form of success ratio:
+
+-  *TEAM_POSRATIO* shows the success ratio: successes in attacking (batting) vs failures in pitching
+-  *SBPERCENT* was added for the stolen base percentage: bases stolen vs bases caught stealing (removed from data set) 
+
+```{r echo=FALSE}
+trainingdata$TEAM_POSRATIO <- trainingdata$TEAM_BATTING_ALLPOSATTCK / trainingdata$TEAM_PITCHING_BASESGIVEN
+
+trainingdata$TEAM_BASERUN_SB[is.na(trainingdata$TEAM_BASERUN_SB)] <- 0
+trainingdata$TEAM_BASERUN_CS[is.na(trainingdata$TEAM_BASERUN_CS)] <- 0
+trainingdata$SBPERCENT <- trainingdata$TEAM_BASERUN_SB / (trainingdata$TEAM_BASERUN_SB + trainingdata$TEAM_BASERUN_CS)
+trainingdata$SBPERCENT[is.na(trainingdata$SBPERCENT)] <- 0
+```
+
+##Columns removed
+
+Some columns have been removed from the analysis: TEAM_BASERUN_SB, TEAM_BASERUN_CS, and TEAM_BATTING_HBP. There are a significant number of NA's (90% of the values are missing) in the HBP column and applying a zero value to this figure is misleading. By including the values that are present in our newly created columns, we can preserve the values of gaining a base on an attacking play by being hit by a ball without the noise. A similar methodology and thought process was used for SB and CS
+
+```{r echo=FALSE}
+trainingdata$TEAM_BATTING_HBP <- NULL
+trainingdata$TEAM_BASERUN_SB <- NULL
+trainingdata$TEAM_BASERUN_CS <- NULL
+```
+
+##Diagnostic plots
+
+Diagnostic plots of the variables were used to discover if any variables needed a mathematical transformation (i.e. log or square roots):
+
+```{r echo=FALSE}
+par(mfrow=c(4,5))
+#par(mar = rep(2, 4))#I need this to knit
+for(i in 2:ncol(trainingdata)-1){#last one dropped to fit on page...
+title<-substring(names(trainingdata)[i],6) 
+hist(trainingdata[,i],main=title)
+}
+#colnames(trainingdata[,2:21])
+par(mfrow=c(1,1))
+
+```
+
+##Mathematical transformations
+
+Skewed variables needed to be adjusted, so the log form of the following variables was used to normalize the data:
+
+-  TEAM_BATTING_H
+-  TEAM_BATTING_3B
+-  TEAM_PITCHING_BB
+-  TEAM_FIELDING_E
+-  TEAM_BATTING_HITSBASE
+-  TEAM_BATTING_1B
+
+The following variables are skewed but were not adjusted:
+-  TEAM_PITCHING_H  #PITCHING_H still has too many high values
+-  TEAM_PITCHING_BADPITCH #high values skew
+-  TEAM_PITCHING_BASESGIVEN #high values skew
+-  TEAM_POSRATIO #low values skew
+
+These fields need to be fixed:
+-  TEAM_FIELDING_DP (0 values skew)
+-  TOTAL_BASES (0 values are skewing--should remove 0's)
+-  SBPERFECT  (0 values are skewing)
+
+```{r echo=FALSE}
+trainingdata$TEAM_BATTING_H <- log(trainingdata$TEAM_BATTING_H)
+trainingdata$TEAM_BATTING_3B <- log(trainingdata$TEAM_BATTING_3B)
+trainingdata$TEAM_PITCHING_BB <- log(trainingdata$TEAM_PITCHING_BB)
+trainingdata$TEAM_FIELDING_E <- log(trainingdata$TEAM_FIELDING_E)
+trainingdata$TEAM_BATTING_HITSBASE <- log(trainingdata$TEAM_BATTING_HITSBASE)
+trainingdata$TEAM_BATTING_1B <- log(trainingdata$TEAM_BATTING_1B)
+
+
+```
+Remaining 'na' values were omited from the data set before models were created. 
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+#removing remaining na data before building models
+trainingdata<-na.omit(trainingdata)
+```
+
+
+***
+
+#BUILD MODELS
+
+##Forward Stepwise Method 
+
+As a measure of automation accuracy and a test against more traditional models, a stepwise approach was performed using a forward AIC (Akaike information criterion) method.
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+#Multiple linear regression using stepwise methodolog
+#cb - including only one version of the TOTAL_BASES variable - version B this one gets the best R2
+trainingdatab<-trainingdata%>%select(-TOTAL_BASES_A)
+
+all<-lm(TARGET_WINS~.,trainingdatab)
+all<-update(all,~.-INDEX)
+null=lm(TARGET_WINS~1, data=trainingdatab)
+stepResults<-step(null,scope=list(lower=null,upper=all),direction="forward")
+stepResults
+```
+
+Current optimal results from stepwise method with diagnostic plots
+
+```{r}
+#stepResults
+sumary(stepResults)
+par(mfrow=c(2,2))
+plot(stepResults)
+```
+
+Discussion of coefficients: In the stepwise generated model many variables were selected that are linearly related to each other. The first 12 variables are statistically significant despite the multicollinearity. An argument can be made for the final 3 that they are not highly significant and could be removed.  The relationships between the predictor variables result in some surprising coefficients that are difficult to directly interpret.  For example The Total Bases variable has an expected positive impact on score, but the number of 2nd bases has a negative impact. Another example is the positive coefficient for the variable Pitch Ratio - this variable measures bad/good pitching outcomes, and a higher amount means a greater number of 'bad' outcomes (home runs allowed).  The positive relationship however is probably related to the strange fact that pitching home runs allowed is highly, positively, related to the number of batting home runs - a counterintuitive relationship in the raw data. 
+
+
+
+
+##Backward Elimination Model
+
+Using backward elimination, and removing high p-value variables to get the highest adjusted $R^2$, the final regression model is:
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+#starting point
+# cb had to rerun this process with the changes in excluding sbpercent and the 700 datapoints
+BEmodel_start <- lm(TARGET_WINS ~ TEAM_BATTING_H + TEAM_BATTING_2B + TEAM_BATTING_3B + TEAM_BATTING_HR + TEAM_BATTING_BB + TEAM_BATTING_SO + TEAM_PITCHING_H + TEAM_PITCHING_HR + TEAM_PITCHING_BB + TEAM_PITCHING_SO + TEAM_FIELDING_E + TEAM_FIELDING_DP + TEAM_BATTING_1B + TOTAL_BASES_A + TEAM_BATTING_HITSBASE + TEAM_BATTING_ALLPOS +  TOTAL_BASES_B + TEAM_BATTING_ALLPOSATTCK + TEAM_PITCHING_BADPITCH + TEAM_PITCHRATIO + TEAM_POSRATIO + SBPERCENT, trainingdata)
+
+BEmodel_final <- lm(TARGET_WINS ~ TEAM_BATTING_H + TEAM_BATTING_3B + TEAM_BATTING_HR + TEAM_PITCHING_H + TEAM_PITCHING_BB + TEAM_PITCHING_SO + TEAM_FIELDING_E + TEAM_FIELDING_DP + TEAM_BATTING_HITSBASE + TOTAL_BASES_B + TEAM_BATTING_ALLPOSATTCK + TEAM_PITCHING_BADPITCH + TEAM_PITCHRATIO + TEAM_POSRATIO + SBPERCENT, trainingdata)
+```
+
+```{r echo=FALSE} 
+sumary(BEmodel_final)
+par(mfrow=c(2,2))
+plot(BEmodel_final)
+par(mfrow=c(1,1))
+```
+
+Discussion of coefficients
+All remaining variables after elimination are statistically significant to the model.  The overall  $R^2$ decreased by 1 point, with the elimination of 7 variables. 
+TOTAL_BASES:  The final model indicates a positive impact on total wins of .09 per-bases-gained in batting situations because of the relationship between the TOTAL_BASES variables and other base-gain variables such as TEAM_BATTING_HR.
+And TEAM_BATTING_HITSBAS and TEAM_BATTING_ALLPOSATTCK we see unexpected negative coefficients in those areas.
+FIELDING_DP:  This is a unexpected negative impact on total wins of .004 per double play.
+
+
+##Simple Model
+
+The 'simple' model was designed to include a limited number of input variables using a more intuitive approach to the selection as a comparison to the backwards elimination or stepwise approach. 
+This model was created by examining the correlation between variables, choosing those that have high relationships with the target variable and lower relationships with each other. There are 3 general types of variables to choose from - batting, pitching and fielding. A single variable was chosen from each category to represent these factors. 
+
+Variables chosen:
+TOTAL_BASES - a linear combination of the batting variables, weighted by base number lending greater significance to higher bases.
+TEAM_FIELDING_E - the log of the # of fielding errors.
+TEAM_PITCHRATIO - This is the ratio of the number of home runs allowed versus the number of strikeouts allowed
+
+Model Output
+```{r echo=FALSE, message=FALSE, results='hide'}
+simpledata <- trainingdata%>%select(TARGET_WINS,TOTAL_BASES_B,TEAM_FIELDING_E,TEAM_PITCHRATIO)
+simplemod<-lm(TARGET_WINS~TOTAL_BASES_B +TEAM_FIELDING_E +TEAM_PITCHRATIO,simpledata)
+```
+```{r echo=FALSE, message=FALSE}
+sumary(simplemod)
+```
+Coefficients
+Two out of three of the coefficients selected for the model were statistically significant.
+TOTAL_BASES:  Wins increase by .0250 for each base per batter. TOTAL_BASES is a linear combination of all bases gained, weighted for the base number. Because of the high values (mean of 2814 and standard deviation of 257) the impact of TOTAL_BASES on the number of wins is not negligible. 
+TEAM_FIELDING_E:  Wins are decreased as the number fielding errors increase.  Because our variable is the the log of the errors it is not a linear relationship, but rather -2.702 for each log of the field errors.
+TEAM_PITCHRATIO: This variable was not helpful in explaining the model, having a high p-value and was removed from the final version shown below.
+
+Model was re-evaluated excluding the PitchRatio variable, which slightly alters the coefficients. 
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+simplemod<-lm(TARGET_WINS~TOTAL_BASES_B +TEAM_FIELDING_E,simpledata)
+```
+Revised Model Output
+```{r echo=FALSE, message=FALSE}
+sumary(simplemod)
+par(mfrow=c(2,2))
+plot(simplemod)
+```
+
+Equation with transformed variables:
+Wins = 
+.0246* TOTAL_BASES - 2.7584 * TEAM_FIELDING_E
+
+Equation with original variables:
+
+Wins = 
+.0246 * (TEAM_BATTING_BB + TEAM_BATTING_1B + 2* TEAM_BATTING_2B + 3*TEAM_BATTING_3B+ 4 * TEAM_BATTING_HR + BASERUN_SB) 
+-2.7584* log(TEAM_FIELDING_E)
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+coef(stepResults)
+coef(BEmodel_final)
+coef(simplemod)
+```
+
+#SELECT MODELS 
+
+A comparison of the stepwise, elimination, and simple models included evaluating the $R^2$ values, the Aikake Information Criterion (AIC), and the Bayesian Information Criterion (BIC).
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+#Models obtained from previous section : stepResults, BEmodel_final, all, simplemod
+model1=stepResults
+model2=BEmodel_final
+model3=simplemod
+
+```
+
+
+##Model selection with the adjusted R squared
+Assuming the model with the highest adjusted R squared is the "best" model.
+```{r echo=FALSE, message=FALSE, results='hide'}
+r.sq=c(summary(model1)$r.squared, summary(model2)$r.squared, summary(model3)$r.squared)
+adj.r.sq=c(summary(model1)$adj.r.squared, summary(model2)$adj.r.squared, summary(model3)$adj.r.squared)
+r.sq
+adj.r.sq
+
+```
+The Adjusted R squared for each model is `r adj.r.sq`. Based on this criteria, the first model, Stepwise, should be selected as the best model. 
+Let's see if this result can be confirmed by another model selection method. We will focus in the next section on Aikake Information Criterion.
+
+##Model selection with Aikake Information Criterion (AIC)
+
+The idea here is that the model with the smallest AIC value is the "best". We will be interested in the difference of AIC between fitted models.
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+x <-c(AIC(model1), AIC(model2),AIC(model3))
+x
+
+delta <- x -min(x) #AIC differences
+delta
+
+L<- exp(-0.5*delta) #Likelihood of models
+L
+```
+
+The AIC for each model is given by
+`r x `.  
+According to the AIC criterion, the first model also has the smallest AIC. Based on this result, we can use the stepwise as our best model. We can use the BIC double check the results with the BIC criterion.
+
+
+##Model selection with Bayesian Information Criterion (BIC)
+
+BIC and AIC work the same. The model with the smallest BIC is the "best" in the set of models fitted.
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+x <-c(BIC(model1), BIC(model2), BIC(model3))
+x
+
+delta <- x -min(x) #BIC differences
+delta
+
+L<- exp(-0.5*delta) #Likelihood of models
+L
+```
+
+The BIC for each model is given by
+`r x ` 
+The BIC criterion is also showing the Stepwise model as the one with the smallest BIC difference among fitted model.
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+best_model= model1
+```
+
+##Predicting TARGET_WINS using the evaluation data
+
+###Data preparation
+Evaluation data was treated to the same variable transformations and handeling of 'na' values as the original training data set.
+
+```{r }
+evalData<-evaluationData
+#applying same logic used for training data to deal w/ na's
+evalData$TEAM_BATTING_HBP[is.na(evalData$TEAM_BATTING_HBP)] <- 0
+evalData$TEAM_FIELDING_DP[is.na(evalData$TEAM_FIELDING_DP)] <- 0
+
+evalData$TEAM_BATTING_1B<-evalData$TEAM_BATTING_H- evalData$TEAM_BATTING_2B- evalData$TEAM_BATTING_3B- evalData$TEAM_BATTING_HR
+
+temp1B<-evalData$TEAM_BATTING_1B;temp1B[is.na(temp1B)]<-0
+temp2B<-evalData$TEAM_BATTING_2B*2;temp2B[is.na(temp2B)]<-0
+temp3B<-evalData$TEAM_BATTING_3B*3;temp3B[is.na(temp3B)]<-0
+tempHR<-evalData$TEAM_BATTING_HR*4;tempHR[is.na(tempHR)]<-0
+tempSB<-as.numeric(evalData$TEAM_BASERUN_SB);tempSB[is.na(tempSB)]<-0
+tempCS<-evalData$TEAM_BASERUN_CS*-1;tempCS[is.na(tempCS)]<-0
+tempBB<-as.numeric(evalData$TEAM_BATTING_BB);tempBB[is.na(tempBB)]<-0
+tempHBP<-as.numeric(evalData$TEAM_BATTING_HBP);tempHBP[is.na(tempHBP)]<-0
+evalData$TOTAL_BASES_A<-temp1B+temp2B+temp3B+tempHR+tempSB+tempCS+tempBB+tempHBP
+
+evalData$TOTAL_BASES_B<-(evalData$TEAM_BATTING_2B*2)+(evalData$TEAM_BATTING_3B*3)+(evalData$TEAM_BATTING_HR*4)+ evalData$TEAM_BASERUN_SB+evalData$TEAM_BATTING_BB+evalData$TEAM_BATTING_1B
+
+evalData$TEAM_BATTING_HITSBASE <- evalData$TEAM_BATTING_H + evalData$TEAM_BATTING_2B + evalData$TEAM_BATTING_3B
+
+
+evalData$TEAM_BATTING_ALLPOS <- evalData$TEAM_BATTING_H + evalData$TEAM_BATTING_BB + evalData$TEAM_BATTING_HBP
+
+
+evalData$TEAM_BATTING_ALLPOSATTCK <- evalData$TEAM_BATTING_H + evalData$TEAM_BATTING_2B + evalData$TEAM_BATTING_3B + evalData$TEAM_BATTING_HR + evalData$TEAM_BATTING_BB + evalData$TEAM_BATTING_HBP + evalData$TEAM_BASERUN_SB
+
+evalData$TEAM_PITCHING_BADPITCH <- evalData$TEAM_PITCHING_H + evalData$TEAM_PITCHING_BB
+
+
+evalData$TEAM_PITCHING_BASESGIVEN <- evalData$TEAM_PITCHING_H + evalData$TEAM_PITCHING_BB + evalData$TEAM_PITCHING_HR
+
+evalData$TEAM_PITCHRATIO <- evalData$TEAM_PITCHING_HR / evalData$TEAM_PITCHING_SO
+
+evalData$TEAM_POSRATIO <- evalData$TEAM_BATTING_ALLPOSATTCK / evalData$TEAM_PITCHING_BASESGIVEN
+
+evalData$SBPERCENT <- evalData$TEAM_BASERUN_SB / (evalData$TEAM_BASERUN_SB + evalData$TEAM_BASERUN_CS)
+
+evalData$TEAM_BATTING_H <- log(evalData$TEAM_BATTING_H)
+evalData$TEAM_BATTING_3B <- log(evalData$TEAM_BATTING_3B)
+evalData$TEAM_PITCHING_BB <- log(evalData$TEAM_PITCHING_BB)
+evalData$TEAM_FIELDING_E <- log(evalData$TEAM_FIELDING_E)
+evalData$TEAM_BATTING_HITSBASE <- log(evalData$TEAM_BATTING_HITSBASE)
+evalData$TEAM_BATTING_1B <- log(evalData$TEAM_BATTING_1B)
+
+evalData<-evalData%>%select(-TEAM_BATTING_HBP)
+evalData$TEAM_BASERUN_SB <- NULL
+evalData$TEAM_BASERUN_CS <- NULL
+
+
+# variables actually need for our model, creating subset so we don't worry about the na's in other fields
+
+evalDatasub <- evalData%>%select(TOTAL_BASES_B, TEAM_PITCHING_SO, TEAM_FIELDING_E, TEAM_BATTING_2B, TEAM_BATTING_HR,TEAM_BATTING_BB, TEAM_PITCHRATIO,TEAM_FIELDING_DP,TEAM_BATTING_ALLPOS,TEAM_POSRATIO,TEAM_PITCHING_BB,TEAM_PITCHING_BADPITCH,TEAM_PITCHING_H,TEAM_BATTING_3B,SBPERCENT)
+
+
+# 259 obs,31 are NA 
+
+evalDatasub<-na.omit(evalDatasub)
+
+```
+
+###Prediction
+```{r }
+evalDatasub$TARGET_WINS<-predict(best_model, newdata=evalDatasub, type='response')
+
+```
+We were able to use our selected model to predict Target Wins for the evaluation data for 228 complete observations out of the 259 total available. 
+We found the mean of the predicted values was`r mean(evalDatasub$TARGET_WINS)` with a standard deviation of `r sd(evalDatasub$TARGET_WINS)`. This can be compared to the mean and standard deviation of the training data set used to create the model of `r meanData` and `r sdData`. 
+Comparing density of actual wins vs. predict wins
+
+```{r echo=FALSE, message=FALSE}
+#Density Plots - looking at distribution of interesting variables
+
+g1 <- ggplot(data = trainingdata, aes(x = TARGET_WINS) )+
+  geom_density(alpha = .2, fill = "003333")+
+  ggtitle("Training Wins Density")
+g2 <- ggplot(data = evalDatasub, aes(x = TARGET_WINS) )+
+  geom_density(alpha = .2, fill = "#CC6666")+
+  ggtitle("Predicted Wins Density")
+g3<- ggplot(data = trainingdata, aes(x=1, y = TARGET_WINS)) + geom_boxplot(fill = "white", colour = "#3399CC", outlier.colour = "red", outlier.shape = 1) + xlab("") + ylab("Wins") +
+  ggtitle("Wins - Training Data")
+g4<- ggplot(data = evalDatasub, aes(x=1, y =TARGET_WINS)) + geom_boxplot(fill = "white", colour = "#3399CC", outlier.colour = "red", outlier.shape = 1) + xlab("") + ylab("Wins") +
+  ggtitle("Wins - Predicted")
+grid.arrange(g1,g2,g3,g4, ncol=2, top ="Wins Distributions Actual vs Predicted")
+```
+***
+
+
+#APPENDIX
+
+
+
