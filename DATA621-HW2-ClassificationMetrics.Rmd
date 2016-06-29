@@ -1,0 +1,746 @@
+
+---
+
+title: "DATA 621 - Homework 2 - Classification Metrics"
+
+author: "Cheryl Bowersox, Christopher Martin, Robert Sellers, Edwige Talla Badjio"
+
+date: "June 26, 2016"
+
+output:
+
+  html_document:
+
+    fig_caption: yes
+
+    force_captions: yes
+
+    highlight: pygments
+
+   number_sections: yes
+
+    theme: united
+
+    toc: no
+
+  pdf_document:
+
+    fig_caption: yes
+
+    highlight: pygments
+
+    latex_engine: xelatex
+
+    number_sections: yes
+
+    toc: no
+
+csl: mee.csl
+
+title2: Classification Metrics
+
+---
+
+
+```{r message=FALSE, echo=FALSE}
+
+#install packages - this will not be shown
+
+
+#Assignment 2 packages
+
+suppressWarnings(library(caret))
+
+suppressWarnings(library(pROC))
+
+suppressWarnings(library(knitr))
+
+suppressWarnings(library(pander))
+
+suppressWarnings(library(dplyr))
+
+suppressWarnings(library(pracma))
+
+
+########load data#######
+
+classificationdata <- read.csv("https://raw.githubusercontent.com/cherylb/IS621Group4/master/classification-output-data.csv", header=TRUE)
+
+#preserve original data
+
+originaldata <- classificationdata 
+
+
+percent <- function(x, digits = 2, format = "f", ...) {
+
+  paste0(formatC(100 * x, format = format, digits = digits, ...), "%")
+
+}
+
+
+```
+
+
+***
+
+
+
+2. Using the **table** function to get the raw confusion matrix for this scored dataset. Make sure you understand the output. In particular, do the rows represent the actual or predicted class? The columns?
+
+
+```{r message=FALSE, echo=FALSE}
+
+class <- classificationdata$class
+
+scored.class <- classificationdata$scored.class
+
+confMatrix <- matrix(c("TN","FP","FN","TP"), ncol=2)
+
+colnames(confMatrix) <- c('p0', 'p1')
+
+rownames(confMatrix) <- c('a0', 'a1')
+
+kable(confMatrix,caption = "Reference Confusion Matrix")
+
+realTable<-table(scored.class,class)
+
+colnames(realTable) <- c('p0', 'p1')
+
+rownames(realTable) <- c('a0', 'a1')
+
+kable(realTable,caption = "Class Confusion Matrix")
+
+```
+
+
+This tabulation represents the success of the model's predictions ***scored.class/a*** versus the actual results ***class/p***. 
+
+The ***scored.probability*** represents the threshold value which determines if the predicted value is 0 (***scored.probability*** < 50%) or 1 (***scored.probability*** > 50%).
+
+
+
+
+
+***
+
+
+3. Write a function that takes the data set as a dataframe, with actual and predicted classifications identified, and returns the accuracy of the predictions.
+
+
+$$Accuracy = \frac{TP+TN}{TP+FP+TN+FN}$$
+
+
+```{r message=FALSE, echo=FALSE}
+
+#alt function
+
+#the.conf.matrix <- function(df, predicted, actual="class"){
+
+#  table(select(originaldata, class, scored.class))
+
+#}
+
+
+the.conf.matrix <- function(df, predicted, actual="class"){
+
+   conf.mat <- table(df[,predicted], df[,actual])
+
+#   conf.mat <- as.matrix(table(df[,predicted], df[,actual]))
+
+   return(conf.mat)
+
+}
+
+```
+
+```{r}
+
+the.accuracy <- function(df, predicted, actual="class"){
+
+   #computing the confusion matrix
+
+      conf.mat <- the.conf.matrix(df, predicted)
+
+   # Assigning TP, FN, FP and TN using the confusion matrix
+
+      TN <- conf.mat[1,1]
+
+      FN <- conf.mat[1,2]
+
+      FP <- conf.mat[2,1]
+
+      TP <- conf.mat[2,2]
+
+   #computing the accuracy
+
+      myaccuracy = (TP + TN) / (TP + FN + FP + TN)
+
+      return(as.numeric(myaccuracy))
+
+}
+
+```
+
+```{r message=FALSE, echo=FALSE}
+
+acc <- the.accuracy(originaldata, "scored.class")
+
+```
+
+
+The accuracy for the provided data is `r round(acc,4)`. This means that 81% of the number of predictions from the model (postiive or negative) were correct.   
+
+
+***
+
+
+4. Write a function that takes the data set as a dataframe, with actual and predicted classifications identified, and returns the classification error rate of the predictions. Verify that you get an accuracy and an error rate that sums to one.
+
+
+$$Classification Error Rate = \frac{FP+FN}{TP+FP+TN+FN}$$
+
+
+
+```{r}
+
+the.classif.err.rate <- function(df, predicted, actual="class"){
+
+   #obtaining the confusion matrix
+
+      conf.mat <- the.conf.matrix(df, predicted)
+
+   # Assigning TP, FN, FP and TN using the confusion matrix
+
+      TN <- conf.mat[1,1]
+
+      FN <- conf.mat[1,2]
+
+      FP <- conf.mat[2,1]
+
+      TP <- conf.mat[2,2]
+
+   #computing the classification error rate
+
+      myclasserrate <- (FP + FN) / (TP + FP + TN + FN)
+
+      return(as.numeric(myclasserrate))
+
+}
+
+```{r message=FALSE, echo=FALSE}
+
+err <- the.classif.err.rate(originaldata, "scored.class")
+
+```
+
+
+The classification error rate for the provided data is `r round(err,4)` and the sum of the error rate and accuracy correctly sum to `r err + acc`. 
+
+The classification error rate indicates about 19% of the model predictions are not correct. 
+
+
+***
+
+
+5. Write a function that takes the data set as a dataframe, with actual and predicted classifications identified, and returns the precision of the predictions.
+
+
+$$Precision = \frac{TP}{TP+FP}$$
+
+
+```{r}
+
+the.precision <- function(df, predicted, actual="class")
+
+{
+
+   #obtaining the confusion matrix
+
+      conf.mat <- the.conf.matrix(df, predicted)
+
+   # Assigning TP, FN, FP and TN using the confusion matrix
+
+      TN <- conf.mat[1,1]
+
+      FN <- conf.mat[1,2]
+
+      FP <- conf.mat[2,1]
+
+      TP <- conf.mat[2,2]
+
+   #computing the precision
+
+      myprecision <- TP / (TP + FP)
+
+      return(as.numeric(myprecision))
+
+}
+
+```{r message=FALSE, echo=FALSE}
+
+prec=the.precision(originaldata, "scored.class")
+
+```
+
+
+The precision for the provided data is `r round(prec,4)`. This is the percentage of the positive predictions that are actually positive. 
+
+
+***
+
+
+6. Write a function that takes the data set as a dataframe, with actual and predicted classifications identified, and returns the sensitivity of the predictions. Sensitivity is also known as recall.
+
+
+$$Sensitivity = \frac{TP}{TP+FN}$$
+
+```{r}
+
+the.sensitivity <- function(df, predicted, actual="class")
+
+{
+
+   #obtaining the confusion matrix
+
+      conf.mat <- the.conf.matrix(df, predicted)
+
+   # Assigning TP, FN, FP and TN using the confusion matrix
+
+      TN <- conf.mat[1,1]
+
+      FN <- conf.mat[1,2]
+
+      FP <- conf.mat[2,1]
+
+      TP <- conf.mat[2,2]
+
+   #computing the sensitivity
+
+      mysensitiv <- TP / (TP + FN)
+
+      return(as.numeric(mysensitiv))
+
+}
+
+```
+
+```{r message=FALSE, echo=FALSE}
+
+the.sensitivityAlt <- function(classification, actual, predicted){
+
+ confusion <- table(select(classification, get(actual), get(predicted)))
+
+  if(dim(confusion)[2] == 1){
+
+    if(colnames(confusion) == 0){
+
+      sensitivity <- 0
+
+    } else{
+
+      sensitivity <- 1
+
+    }
+
+  } else{
+
+#This output works
+
+#well, if it works it works!
+
+    sensitivity <- confusion[2,2]/(confusion[2,1] + confusion[2,2])
+
+  }
+
+   percentage 
+
+  return(sensitivity)
+
+}
+
+
+
+sens <- the.sensitivity(originaldata, "scored.class")
+
+```
+
+
+The sensitivity for the provided data is `r round(sens,4)`.  Thisshows how many of the actual positive outcomes were predicted as positive in the model. 
+
+
+
+***
+
+
+7. Write a function that takes the data set as a dataframe, with actual and predicted classifications identified, and returns the specificity of the predictions.
+
+
+$$Specificity = \frac{TN}{TN+FP}$$
+
+
+```{r}
+
+
+the.specificity <- function(df, predicted, actual="class"){
+
+   #obtaining the confusion matrix
+
+      conf.mat <- the.conf.matrix(df, predicted)
+
+   # Assigning TP, FN, FP and TN using the confusion matrix
+
+      TN <- conf.mat[1,1]
+
+      FN <- conf.mat[1,2]
+
+      FP <- conf.mat[2,1]
+
+      TP <- conf.mat[2,2]
+
+   #computing the specificity
+
+      myspecif <- TN / (TN + FP)
+
+      return(as.numeric(myspecif))
+
+}
+
+```
+
+```{r message=FALSE, echo=FALSE}
+
+the.specificityAlt <- function(df, actual.col, predicted.col){
+
+  actual <- df[actual.col]
+
+  predicted <- df[predicted.col]
+
+  newvec <-  ifelse(actual==0 & predicted==0, "TN",
+
+             ifelse(actual==0 & predicted==1, "FP",
+
+             ifelse(actual==1 & predicted==0, "FN", "TP")))
+
+  conf <-table(newvec)
+
+  spec <- conf["TN"]/(conf["TN"]+conf["FP"])
+
+  return(as.numeric(spec))
+
+}
+
+
+
+spec <- the.specificity(originaldata, "scored.class")
+
+```
+
+
+
+
+
+The specificity for the provided data is `r round(spec,4)`. This is the percentage of negative outcomes that were correctly predicted by the model. 
+
+
+
+***
+
+
+8. Write a function that takes the data set as a dataframe, with actual and predicted classifications identified, and returns the F1 score of the predictions.
+
+
+$$F1 Score = \frac{2*Precision*Sensitivity}{Precision+Sensitivity}$$
+
+
+```{r}
+
+the.f1score <- function(df, predicted, actual="class"){
+
+   #obtaining the confusion matrix
+
+      conf.mat <- the.conf.matrix(df, predicted)
+
+   # Assigning TP, FN, FP and TN using the confusion matrix
+
+      TN <- conf.mat[1,1]
+
+      FN <- conf.mat[1,2]
+
+      FP <- conf.mat[2,1]
+
+      TP <- conf.mat[2,2]
+
+   #computing the specificity
+
+      mysensitiv <- TP / (TP + FN)
+
+      myprecision <- TP / (TP + FP)
+
+      myf1score <- (2 * myprecision * mysensitiv)/(myprecision + mysensitiv)  
+
+      return(as.numeric(myf1score))
+
+}
+
+```
+
+```{r message=FALSE, echo=FALSE}
+
+f1s <- the.f1score(originaldata, "scored.class")
+
+```
+
+
+
+The F1 score for the provided data is `r round(f1s,4)` measuring the combined sensitivity and precision of the model. 
+
+
+***
+
+
+9. Before we move on, let's consider a question that was asked: What are the bounds on the F1 score? Show that the F1 score will always be between 0 and 1. (Hint: If ($0<a<1$ and $0<b<1$ then $ab<a$.)
+
+
+$$F1 Score = \frac{2*Precision*Sensitivity}{Precision+Sensitivity}$$
+
+
+The F1 score is quantified by precision and sensitivity.
+
+
+$$Precision = \frac{True Positives}{All Actual Positives}$$
+
+
+Precision will always have a lower bound of 0 (if true positives are 0) and an upper bound of 1 (if true positives are equal to all actual positives).
+
+
+$$Sensitivity = \frac{True Positives}{All Predicted Positives}$$
+
+
+Sensitivity will always have a lower bound of 0 (if true positives are 0) and an upper bound of 1 (if true positives are equal to all predicted positives).
+
+
+If either Precision or Sensitivity equals 0, the F1 score will have a numerator of 0 and is therefore lower bound by 0. If both variables are equal to 0, the F1 score denominator will be 0 and be indeterminant/invalid. At the other end of the spectrum, if the Precision and Sensitivity are equal to their maximum value (1), the numerator will be 2 (2 * 1 * 1) and the denominator will be 2 (1 + 1), giving the F1 score it's maximum value of 1.
+
+
+***
+
+
+10. Write a function that generates an ROC curve from a data set with a true classification column (class in our example) and a probability column (scored.probability in our example). Your function should return a list that includes the plot of the ROC curve and a vector that contains the calculated area under the curve (AUC). Note that I recommend using a sequence of thresholds ranging from 0 to 1 at 0.01 intervals
+
+
+```{r message=FALSE, echo=FALSE}
+
+
+roc_func_Robert<- function(df,actual) {
+
+  #create empty dfs
+
+  new.sens <- c()
+
+  new.spec <- c()
+
+  sequence <- seq(0.01,1,0.01)
+
+  #loop to create the specificity and sensitivity results and binary scores
+
+  for(i in sequence) {   
+
+    df$new.score <- ifelse(df$scored.probability < i, 0, 1)
+
+    new.sens[i * 100 + 1] <-the.specificityAlt(df,actual,'new.score')
+
+    new.spec[i * 100 + 1] <- the.sensitivityAlt(df,actual,'new.score')
+
+  }
+
+  df_roc <- data.frame(threshold=seq(0, 1, 0.01), sensitivity = new.sens, specificity = new.spec)
+
+  return(df_roc)
+
+}
+
+
+
+roc_func2<- function(df,actual) {
+
+ #create empty dfs
+
+  new.sens <- c()
+
+  new.spec <- c()
+
+  seq <- c()
+
+  sequence <- seq(0.01,1,0.01)
+
+  #loop to create the specificity and sensitivity results and binary scores
+
+  for(i in sequence) {
+
+    seq <- append(seq,i)
+
+    if(i < min(df$scored.probability)){ #all 0
+
+      new.sens <- append(new.sens,0)
+
+      new.spec <- append(new.spec, 1)
+
+    }else if(i > max(df$scored.probability)){
+
+      new.sens <- append(new.sens,1)
+
+      new.spec <- append(new.spec, 0)
+
+    }else{
+
+      df$new.score <- ifelse(df$scored.probability < i, 0, 1)
+
+      new.spec <- append(new.spec,the.specificity(df, predicted = "new.score", actual = "class"))
+
+      new.sens <- append(new.sens,the.sensitivity(df, predicted = "new.score", actual = "class"))
+
+    }
+
+  }
+
+    
+
+   df_roc <- data.frame(threshold=seq, sensitivity = new.sens, specificity = new.spec, falsepos = 1 - new.spec)
+
+  return(df_roc)
+
+}
+
+
+
+
+rocdata <- roc_func2(originaldata, actual = "class")
+
+#plot(y = rocCheryl$sensitivity, x =(rocCheryl$falsepos))
+
+
+rocArea = trapz(rocdata$sensitivity, rocdata$falsepos)
+
+
+#rocRobert <- roc_func_Robert(originaldata,"class") 
+
+#plot(rocRobert$sensitivity~ 1 - rocRobert$specificity)
+
+
+
+```
+
+
+```{r message=FALSE, echo=FALSE}
+
+#plot chart
+
+ggplot(data=rocdata) + geom_line(aes(x = falsepos, y=sensitivity))  +
+
+   ggtitle("ROC Curve") + ylab("Sensitivity") +xlab("False Positives")
+
+```
+
+The area under the ROC curve is `r rocArea`.
+
+
+***
+
+
+11. Use your **created R functions** and the provided classification output data set to produce all of the classification metrics discussed above.
+
+
+Summary Output
+
+
+```{r message=FALSE, echo=FALSE}
+
+kable(realTable,caption = "Class Confusion Matrix")
+
+```
+
+
+
+Accuracy: `r percent(acc)`   
+
+
+Classification Error Rate: `r percent(err)`  
+
+
+Precision: `r percent(prec)`  
+
+
+Sensitivity:  `r percent(sens)`  
+
+
+Specificity: `r percent(spec)`  
+
+
+F1 Score: `r percent(f1s)`  
+
+
+
+***
+
+
+12. Investigate the **caret** package. In particular, consider the functions confusionMatrix, sensitivity, and specificity. Apply the functions to the data set. How do the results compare with your own functions?
+
+
+```{r message=FALSE, echo=FALSE}
+
+#confusionMatrix
+
+caretMatrix<-confusionMatrix(data = classificationdata$scored.class, classificationdata$class, "1")
+
+pander(caretMatrix$table,caption="Caret Confusion Matrix Results")
+
+
+#sensitivity
+
+caretSensitivity <- sensitivity(as.factor(classificationdata$scored.class), as.factor(classificationdata$class), "1")
+
+
+#specificity
+
+caretSpecificity <- specificity(as.factor(classificationdata$scored.class), as.factor(classificationdata$class),"0")
+
+
+n = c(round(caretSensitivity,4), round(sens,4))
+
+f = c(round(caretSpecificity,4),round(spec,4))
+
+results = data.frame(n, f)
+
+colnames(results)<-c("Sensitivity","Specificity")
+
+rownames(results)<-c("Caret Package","Custom Functions")
+
+pander(results,caption="Comparison Table")
+
+```
+
+
+The results from the Caret package are identical to those obtained from our custom functions.
+
+
+***
+
+
+13. Investigate the **pROC** package. Use it to generate an ROC curve for the data set. How do the results compare with your own functions?
+
+
+```{r message=FALSE, echo=FALSE}
+
+procROC <- roc(class~scored.probability, classificationdata)
+
+z <- auc(procROC) - rocArea
+
+plot(procROC)
+
+```
+
+
+The area under the curve found by using the roc function in the pROC package is .8503.  Using our custom function the area was found to be `r rocArea`, a difference of `r z` or around `r percent(z/rocArea)`.   
+
+This difference could be caused by a few different things.  In the custom function we used the recommended binning from 0 to 1 at intervals of .01 and evaluated the specificity and sensitivity for 100 probability levels.  The roc function may use different or more specific binning or evaluate a different  number of points, resulting in a slightly different curve and subsequent area. 
+
