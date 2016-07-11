@@ -1,0 +1,2632 @@
+
+---
+
+title: "DATA 621 - Homework 4 - Car Insurance"
+
+author: "Cheryl Bowersox, Christopher Martin, Robert Sellers, Edwige Talla Badjio"
+
+date: "July 10, 2016"
+
+output:
+
+  pdf_document:
+
+    fig_caption: yes
+
+    highlight: pygments
+
+    latex_engine: xelatex
+
+    number_sections: yes
+
+    toc: yes
+
+  html_document:
+
+    fig_caption: yes
+
+   force_captions: yes
+
+    highlight: pygments
+
+    number_sections: yes
+
+    theme: united
+
+    toc: yes
+
+csl: mee.csl
+
+title2: Car Insurance
+
+---
+
+
+
+```{r message=FALSE, echo=FALSE}
+
+#install packages
+
+#this will not be shown
+
+suppressWarnings(library(ggplot2))
+
+suppressWarnings(library(lubridate))
+
+suppressWarnings(library(dplyr))
+
+suppressWarnings(library(tidyr))
+
+suppressWarnings(library(RCurl))
+
+suppressWarnings(library(rjson))
+
+suppressWarnings(library(gridExtra))
+
+suppressWarnings(library(lattice))
+
+suppressWarnings(library(knitr))
+
+suppressWarnings(library(moments))
+
+suppressWarnings(library(caret))
+
+suppressWarnings(library(boot))#glm model diagnostics
+
+suppressWarnings(library(faraway))#VIF 
+
+suppressWarnings(library(pROC))#ROC
+
+suppressWarnings(library(pracma))#AUC/ROC
+
+suppressWarnings(library(pander))#html tables
+
+suppressWarnings(library(pls))#prediction plot (predplot)
+
+suppressWarnings(library(mlogit))#multinomial regression
+
+suppressWarnings(library(e1071))
+
+
+#load data 
+
+trainingdata <- read.csv("https://raw.githubusercontent.com/RobertSellers/dataWarehouse/master/insurance_training_data.csv", header=TRUE, na.strings=c("","NA"))
+
+
+evaluationData <-read.csv("https://raw.githubusercontent.com/RobertSellers/dataWarehouse/master/insurance-evaluation-data.csv", header=TRUE, na.strings=c("","NA"))
+
+
+trainingdata<-trainingdata%>%select(-INDEX)
+
+evaluationData<-evaluationData%>%select(-INDEX)
+
+
+#preserve data
+
+originaltraindata<-trainingdata
+
+originalevaldata <- evaluationData
+
+
+percent <- function(x, digits = 2, format = "f", ...) {
+
+  paste0(formatC(100 * x, format = format, digits = digits, ...), "%")
+
+}
+
+
+the.classif.err.rate <- function(df, predicted, actual="TARGET_FLAG"){
+
+   #obtaining the confusion matrix
+
+      conf.mat <- the.conf.matrix(df, predicted)
+
+   # Assigning TP, FN, FP and TN using the confusion matrix
+
+      TN <- conf.mat[1,1]
+
+      FN <- conf.mat[1,2]
+
+      FP <- conf.mat[2,1]
+
+      TP <- conf.mat[2,2]
+
+   #computing the classification error rate
+
+      myclasserrate <- (FP + FN) / (TP + FP + TN + FN)
+
+      return(as.numeric(myclasserrate))
+
+}
+
+
+
+
+the.conf.matrix <- function(df, predicted, actual="TARGET_FLAG"){
+
+   conf.mat <- table(df[,predicted], df[,actual])
+
+#   conf.mat <- as.matrix(table(df[,predicted], df[,actual]))
+
+  return(conf.mat)
+
+}
+
+```
+
+
+
+#OBJECTIVE
+
+
+To build a multiple linear regression model and binary logistic regression model to predict the probability that a person will crash their car and the amount of money it will cost if the person does crash their car. 
+
+
+***
+
+
+#DATA EXPLORATION
+
+
+```{r echo= FALSE, message=FALSE}
+
+# Inspect the data.
+
+#head(trainingdata, 5)
+
+#summary(trainingdata)  #z_ preceding some attribute values
+
+```
+
+
+##Summary Statistics
+
+
+```{r echo= FALSE, message=FALSE}
+
+id <- which(names(trainingdata)%in%c("HOME_VAL", "BLUEBOOK", "OLDCLAIM", "INCOME"))
+
+trainingdata[, id] <- lapply(trainingdata[, id], function(x) as.numeric(gsub("[$,]","", x)))
+
+```
+
+
+```{r echo= FALSE, message=FALSE}
+
+nro <-nrow(trainingdata)
+
+nco <- ncol(trainingdata)
+
+meanData <- mean(trainingdata$TARGET_AMT)
+
+sdData <- sd(trainingdata$TARGET_AMT)
+
+meanData1 <- mean(trainingdata$TARGET_FLAG)
+
+sdData1 <- sd(trainingdata$TARGET_FLAG)
+
+str(trainingdata)
+
+```
+
+
+The data has `r nrow(trainingdata)` rows, with each record representing a set of information on a customer at an auto insurance company. 
+
+
+We have two response variables. The first one is a binary determinant 'TARGET_FLAG' value with a 1 representing the fact that the car was in a crash and a 0 representing no crash for the car. The target_flag has an approximate mean of `r round(meanData1,1)` and standard deviation of `r round(sdData1,1)`. It follows a Bernoulli distribution and because it is a binary response there are no outliers. 
+
+The second response variable is the cost for a crash, or TARGET_AMT, which has a mean of `r round(meanData,1)` and standard deviation of `r round(sdData,1)`. It follows a relatively normal, uniform distribution and we will not treat any values as outliers.
+
+
+The overview of the data is showing that we will need to proceed to some data transformations for several factor attributes. These will be outlined in the next section, Data Preparation.
+
+
+We have some attributes with missing values (see below below): YOJ, INCOME, HOME_VAL and CAR_AGE.
+
+
+
+```{r echo= FALSE, message=FALSE}
+
+sapply(trainingdata,function(x) sum(is.na(x)))
+
+```
+
+
+```{r echo= FALSE, message=FALSE}
+
+#mydata<-trainingdata[complete.cases(trainingdata),]
+
+#complete.cases
+
+#nrow(mydata)
+
+#all cases
+
+#nrow(trainingdata)
+
+```
+
+***
+
+
+#DATA PREPARATION 
+
+
+##Variables Transformed
+
+
+- KIDSDRIV
+
+
+Due to an excess in values of 0, the 'KIDSDRIV' data was simplified into the binary 0 for does not have kids and 1 for has kids.
+
+
+- HOMEKIDS
+
+
+Due to an excess in values of 0, the 'HOMEKIDS' data was simplified into the binary 0 for does not have kids and 1 for has kids. The same transformation was applied to 'KIDSDRIV'.
+
+
+- INCOME
+
+
+The 'INCOME' data is right-tailed and is corrected through applying a square-root transformation.
+
+
+- HOME_VAL
+
+
+The HOME_VAL variable is bimodal, right-tailed, and 28% of its values are 0. A new variable 'HOMEOWNER' is created with 1 equal to owns home and 0 equals to does not own home or unknown ownership status. The zero values are dropped then subsequently from the 'HOME_VAL' variable. A sixth root was then applied to the 'HOME_VAL' variable.
+
+
+- TRAVTIME
+
+
+The 'TRAVTIME' data was mildly right-tailed and corrected with a sqrt transformation.
+
+
+- BLUEBOOK
+
+
+To correct the right-tail, a square root was taken on the 'BLUEBOOK' variable.
+
+
+- TIF
+
+
+The Time In Force (TIF) variable was negatively skewed with about 50% of the observations falling under 6 years. A new categorical variable, TIF_five was created, with 0 representing 5 or less years and 1 representing 6 or more years. 
+
+
+- OLDCLAIM
+
+
+OLDCLAIM was transformed to a categorical variable with the value of 1 
+
+
+- CLM_FREQ
+
+
+The variable was transformed into a simplified binary 0 for no claims and 1 for one or more claims.
+
+
+- REVOKED
+
+
+The variable 'REVOKED' was transformed. The values were changed to 1 for REVOKED='yes' and 0 for REVOKED equals to 'no'.
+
+- CAR_AGE
+
+
+A new variable was created called 'NEWCAR' which removes the bimodalism into a binary 1 equals new car and 0 equals older car with 1 year being the threshold. The new car values are subsequently removed from 'CAR_AGE' and a logarithmic transformation is applied to correct for the remaining skew.
+
+
+- URBANICITY
+
+
+The 'URBANICITY' column was split into two new binary variables: 'URBANICITY_URBAN' and 'URBANICITY_RURAL'.
+
+
+```{r echo= FALSE}
+
+###################
+
+#KIDSDRIV
+
+par(mfrow=c(3,2))
+
+mosaicplot(trainingdata$KIDSDRIV~trainingdata$TARGET_FLAG,main = "KIDSDRIV BEFORE",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+#This data has many 0s.
+
+###################
+
+trainingdata$KIDSDRIV<-ifelse(trainingdata$KIDSDRIV == 0, 0, 1)
+
+###################
+
+mosaicplot(trainingdata$KIDSDRIV~trainingdata$TARGET_FLAG,main = "KIDSDRIV AFTER",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+
+###################
+
+#AGE
+
+boxplot(trainingdata$AGE,main="AGE")
+
+hist(trainingdata$AGE,main="AGE")
+
+#normal distribution
+
+###################
+
+
+###################
+
+
+###################
+
+#HOMEKIDS
+
+mosaicplot(trainingdata$HOMEKIDS~trainingdata$TARGET_FLAG,main = "HOMEKIDS BEFORE",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+#This data has many 0s.
+
+###################
+
+trainingdata$HOMEKIDS<-ifelse(trainingdata$HOMEKIDS == 0, 0, 1)
+
+###################
+
+mosaicplot(trainingdata$HOMEKIDS~trainingdata$TARGET_FLAG,main = "HOMEKIDS AFTER",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+
+###################
+
+#YOJ
+
+boxplot(trainingdata$YOJ,main="YOJ")
+
+hist(trainingdata$YOJ,main="YOJ")
+
+#normal distribution
+
+###################
+
+
+
+###################
+
+#INCOME
+
+hist(trainingdata$INCOME,main="INCOME Before")
+
+###################
+
+trainingdata$INCOME<-sqrt(trainingdata$INCOME)
+
+###################
+
+hist(sqrt(trainingdata$INCOME),main="INCOME After")
+
+###################
+
+
+###################
+
+#PARENT1
+
+mosaicplot(trainingdata$PARENT1~trainingdata$TARGET_FLAG,main = "PARENT1",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+plot(trainingdata$PARENT1,main="PARENT1")
+
+###################
+
+#trainingdata$PARENT_YES  = ifelse(trainingdata$PARENT1=="Yes", 1, 0)
+
+#trainingdata$PARENT_NO = ifelse(trainingdata$PARENT1=="No", 1, 0)
+
+trainingdata$PARENT1 = ifelse(trainingdata$PARENT1=="Yes", 1, 0)
+
+###################
+
+
+###################
+
+#HOME_VAL
+
+
+hist(trainingdata$HOME_VAL,main="HOME_VAL Before")
+
+numZero<-length(which(trainingdata$HOME_VAL==0))/nrow(trainingdata)
+
+#bimodal, right-tailed. 28% are zero.  New variable?
+
+###################
+
+trainingdata$HOMEOWNER<-ifelse(trainingdata$HOME_VAL == 0, 0, 1)
+
+is.na(trainingdata$HOME_VAL) <- !trainingdata$HOME_VAL
+
+trainingdata$HOME_VAL <- trainingdata$HOME_VAL^(1/6)
+
+###################
+
+hist(trainingdata$HOME_VAL,main="HOME_VAL After")
+
+
+###################
+
+#MSTATUS
+
+
+plot(trainingdata$MSTATUS,main='MSTATUS')
+
+mosaicplot(trainingdata$MSTATUS~trainingdata$TARGET_FLAG,main = "MSTATUS",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+#trainingdata$MSTATUS_MARRIED  = ifelse(trainingdata$MSTATUS=="Yes", 1, 0)
+
+#trainingdata$MSTATUS_UNMARRIED = ifelse(trainingdata$MSTATUS=="z_No", 1, 0)
+
+###################
+
+# Transformed 1 if married, 0 if not
+
+trainingdata$MSTATUS = ifelse(trainingdata$MSTATUS=="Yes", 1, 0) 
+
+
+###################
+
+#SEX
+
+
+plot(trainingdata$SEX,main='SEX')
+
+mosaicplot(trainingdata$SEX~trainingdata$TARGET_FLAG,main = "SEX",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+
+###################
+
+###################
+
+#trainingdata$FEMALE  = ifelse(trainingdata$SEX=="z_F", 1, 0)
+
+#trainingdata$MALE = ifelse(trainingdata$SEX=="M", 1, 0)
+
+###################
+
+# Transformed 0 if male, 1 if female
+
+trainingdata$SEX  = ifelse(trainingdata$SEX=="z_F", 1, 0)  # female = 1, male = 0
+
+
+###################
+
+#EDUCATION
+
+mosaicplot(trainingdata$EDUCATION~trainingdata$TARGET_FLAG,main = "EDUCATION",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+#convert to ordinal/numeric?
+
+###################
+
+trainingdata$EDUCATION_HSCHOOL_NODEGREE  = ifelse(trainingdata$EDUCATION=="<High School", 1, 0)
+
+trainingdata$EDUCATION_HSCHOOL_DEGREE = ifelse(trainingdata$EDUCATION=="z_High School", 1, 0)
+
+trainingdata$EDUCATION_BACHELORS  = ifelse(trainingdata$EDUCATION=="Bachelors", 1, 0)
+
+trainingdata$EDUCATION_MASTERS = ifelse(trainingdata$EDUCATION=="Masters", 1, 0)
+
+trainingdata$EDUCATION_PHD  = ifelse(trainingdata$EDUCATION=="PhD", 1, 0)
+
+###################
+
+
+###################
+
+#JOB
+
+mosaicplot(trainingdata$JOB~trainingdata$TARGET_FLAG,main = "JOB",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$JOB_BLUECOLLAR  = ifelse(trainingdata$JOB=="z_Blue Collar", 1, 0)
+
+trainingdata$JOB_CLERICAL = ifelse(trainingdata$JOB=="Clerical", 1, 0)
+
+trainingdata$JOB_PROFESSIONAL  = ifelse(trainingdata$JOB=="Professional", 1, 0)
+
+trainingdata$JOB_MANAGER = ifelse(trainingdata$JOB=="Manager", 1, 0)
+
+trainingdata$JOB_LAWYER  = ifelse(trainingdata$JOB=="Lawyer", 1, 0)
+
+trainingdata$JOB_HOME_MAKER = ifelse(trainingdata$JOB=="Home Maker", 1, 0)
+
+trainingdata$JOB_STUDENT  = ifelse(trainingdata$JOB=="Student", 1, 0)
+
+trainingdata$JOB_DOCTOR  = ifelse(trainingdata$JOB=="Doctor", 1, 0)
+
+###################
+
+
+###################
+
+#TRAVTIME
+
+
+hist(trainingdata$TRAVTIME,main='TRAVTIME Before')
+
+#Right-tail, log transformation?
+
+###################
+
+trainingdata$TRAVTIME<-sqrt(trainingdata$TRAVTIME)
+
+###################
+
+hist(trainingdata$TRAVTIME,main='TRAVTIME After')
+
+
+
+###################
+
+#CAR_USE
+
+par(mfrow=c(3,2))
+
+mosaicplot(trainingdata$CAR_USE~trainingdata$TARGET_FLAG,main = "CAR_USE",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$CAR_USE_PRIV  = ifelse(trainingdata$CAR_USE=="Private", 1, 0)
+
+trainingdata$CAR_USE_COMM = ifelse(trainingdata$CAR_USE=="Commercial", 1, 0)
+
+###################
+
+# Transformed 1 if use is private, 0 if commercial
+
+trainingdata$CAR_USE = ifelse(trainingdata$CAR_USE=="Private", 1, 0)
+
+
+
+###################
+
+#BLUEBOOK
+
+
+hist(trainingdata$BLUEBOOK,main="BLUEBOOK BEFORE")
+
+#Right-tail, log transformation?
+
+###################
+
+trainingdata$BLUEBOOK<-sqrt(trainingdata$BLUEBOOK)
+
+###################
+
+hist(trainingdata$BLUEBOOK,main="BLUEBOOK AFTER")
+
+
+
+
+
+###################
+
+#TIF
+
+
+hist(trainingdata$TIF, main="TIF BEFORE")
+
+#Right-tail, log transformation?
+
+###################
+
+# under 6 years accounts for about 50% of the data but stat. Sig. diff means of target btween two categories
+
+trainingdata$TIF_five  = ifelse(trainingdata$TIF> 5, 1, 0)
+
+t.test(formula = trainingdata$TARGET_FLAG ~ trainingdata$TIF_five)
+
+
+mosaicplot(trainingdata$TIF_five~trainingdata$TARGET_FLAG,main = "TIF > 5 Yrs",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+
+###################
+
+#CAR_TYPE
+
+mosaicplot(trainingdata$CAR_TYPE~trainingdata$TARGET_FLAG,main = "CAR_TYPE",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$CAR_TYPE_MINIVAN  = ifelse(trainingdata$CAR_TYPE=="Minivan", 1, 0)
+
+trainingdata$CAR_TYPE_TRUCK  = ifelse(trainingdata$CAR_TYPE=="Panel Truck", 1, 0)
+
+trainingdata$CAR_TYPE_PICKUP = ifelse(trainingdata$CAR_TYPE=="Pickup", 1, 0)
+
+trainingdata$CAR_TYPE_SPORTS  = ifelse(trainingdata$CAR_TYPE=="Sports Car", 1, 0)
+
+trainingdata$CAR_TYPE_VAN = ifelse(trainingdata$CAR_TYPE=="Van", 1, 0)
+
+trainingdata$CAR_TYPE_SUV  = ifelse(trainingdata$CAR_TYPE=="z_SUV", 1, 0)
+
+###################
+
+
+###################
+
+#RED_CAR
+
+mosaicplot(trainingdata$RED_CAR~trainingdata$TARGET_FLAG,main = "RED_CAR",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$RED_CAR_YES  = ifelse(trainingdata$RED_CAR=="yes", 1, 0)
+
+trainingdata$RED_CAR_NO = ifelse(trainingdata$RED_CAR=="no", 1, 0)
+
+###################
+
+
+# Transformed 1 yes, 0 if no if we want to keep just 1 var
+
+trainingdata$RED_CAR = ifelse(trainingdata$RED_CAR=="yes", 1, 0)
+
+
+
+###################
+
+#OLDCLAIM
+
+
+hist(trainingdata$OLDCLAIM,main='OLDCLAIM Before')
+
+#Right-tail, log transformation?
+
+###################
+
+#trainingdata$OLDCLAIM<-log(trainingdata$OLDCLAIM)
+
+trainingdata$OLDCLAIM <-ifelse(trainingdata$OLDCLAIM ==  0,0,1)
+
+###################
+
+mosaicplot(trainingdata$OLDCLAIM~trainingdata$TARGET_FLAG,main = "HAS OLD CLAIM",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+
+###################
+
+#CLM_FREQ
+
+
+mosaicplot(trainingdata$CLM_FREQ~trainingdata$TARGET_FLAG,main = "CLM_FREQ Before",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+#This data has many 0s. Dummy binary variables?
+
+###################
+
+trainingdata$CLM_FREQ<-ifelse(trainingdata$CLM_FREQ == 0, 0, 1)
+
+###################
+
+mosaicplot(trainingdata$CLM_FREQ~trainingdata$TARGET_FLAG,main = "CLM_FREQ After",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+
+###################
+
+#REVOKED
+
+mosaicplot(trainingdata$REVOKED~trainingdata$TARGET_FLAG,main = "REVOKED",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$REVOKED_YES  = ifelse(trainingdata$REVOKED=="Yes", 1, 0)
+
+trainingdata$REVOKED_NO = ifelse(trainingdata$REVOKED=="No", 1, 0)
+
+###################
+
+trainingdata$REVOKED  = ifelse(trainingdata$REVOKED=="Yes", 1, 0)
+
+
+
+###################
+
+#MVR_PTS
+
+
+hist(trainingdata$MVR_PTS,main="MVR_PTS Before")
+
+#Right-tailed, log transform/dummy variables?
+
+###################
+
+#trainingdata$MVR_PTS<-log(trainingdata$MVR_PTS)
+
+###################
+
+hist(trainingdata$MVR_PTS,main="MVR_PTS After")
+
+
+###################
+
+#CAR_AGE
+
+
+hist(trainingdata$CAR_AGE,main="CAR_AGE Before")
+
+#summary(trainingdata$CAR_AGE)
+
+#Remove negative values! Convert into dummy variables? Most data is 1 year.
+
+###################
+
+trainingdata$CAR_AGE[trainingdata$CAR_AGE<0] <- 1
+
+trainingdata$NEWCAR <-ifelse(trainingdata$CAR_AGE ==  1,1,0)
+
+trainingdata$CAR_AGE[trainingdata$CAR_AGE == 1 & is.numeric(trainingdata$CAR_AGE)] <- NA
+
+#trainingdata$CAR_AGE<-log(trainingdata$CAR_AGE)
+
+###################
+
+hist(trainingdata$CAR_AGE,main="CAR_AGE After")
+
+
+###################
+
+#URBANICITY
+
+mosaicplot(trainingdata$URBANICITY~trainingdata$TARGET_FLAG,main = "URBANICITY",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$URBANICITY_URBAN  = ifelse(trainingdata$URBANICITY=="Highly Urban/ Urban", 1, 0)
+
+trainingdata$URBANICITY_RURAL = ifelse(trainingdata$URBANICITY=="z_Highly Rural/ Rural", 1, 0)
+
+###################
+
+
+# 1 for urban, 0 for rural
+
+trainingdata$URBANICITY  = ifelse(trainingdata$URBANICITY=="Highly Urban/ Urban", 1, 0)
+
+```
+
+
+
+```{r echo= FALSE, message=FALSE}
+
+#Truncating the original columns
+
+#trainingdata$URBANICITY <- NULL
+
+#trainingdata$MSTATUS <- NULL
+
+#trainingdata$SEX <- NULL
+
+#trainingdata$REVOKED <- NULL
+
+#trainingdata$CAR_USE <- NULL
+
+trainingdata$CAR_TYPE <- NULL
+
+trainingdata$EDUCATION <- NULL
+
+trainingdata$JOB <- NULL
+
+trainingdata$PARENT1 <- NULL
+
+#trainingdata$RED_CAR <- NULL
+
+```
+
+
+
+##Create buckets
+
+
+We have also created 2 sets of data: (1) the full dataset which will be used to predict the probability that someone will crash their car, and (2) a subset of the training data which includes only the data for crashed cars to predict how much the cost of the crash would be.
+
+
+```{r echo=FALSE}
+
+#creating subset for crashed cars
+
+trainingdata_crash <- trainingdata[which(trainingdata$TARGET_FLAG == 1),]
+
+```
+
+
+##Unusual Observations
+
+
+```{r echo=FALSE}
+
+all<-lm(TARGET_AMT~.,trainingdata_crash)
+
+hatv<-hatvalues(all)
+
+predictors<-row.names(trainingdata_crash)
+
+old.par <- par(mfrow=c(1, 2))
+
+halfnorm(hatv,labs=predictors,ylab="Leverages")
+
+#http://stats.stackexchange.com/questions/101274/how-to-interpret-a-qq-plot
+
+qqnorm(rstandard(all))
+
+abline(0,1)
+
+par(old.par)
+
+```
+
+
+The leverage analysis shows some potentially disruptive elements in the data that would warrant further analysis. The QQ plot of the data shows a heavily right skewed distribution and possibly a bimodal distribution. These methods could be applied as support for model selection as a feedback loop towards refining a preferred model.
+
+
+***
+
+
+
+
+#BUILD MODELS
+
+
+##Full Model on 'TARGET_AMT'
+
+
+A multiple linear regression model was run using all variables in our training set.
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+#Multiple linear regression using all variables
+
+trainingdata_FULL1<-trainingdata%>%select(-TARGET_FLAG)
+
+all<-lm(TARGET_AMT~.,na.omit(trainingdata_FULL1))
+
+null=lm(TARGET_AMT~1, na.omit(trainingdata_FULL1))
+
+full_results<- lm(TARGET_AMT~.,data=trainingdata_FULL1)
+
+```
+
+
+Results from the model with diagnostic plots
+
+
+```{r}
+
+#FULL MODEL
+
+sumary(full_results)
+
+par(mfrow=c(2,2))
+
+plot(full_results)
+
+```
+
+
+Discussion of the coefficients:
+
+
+As assumed, the full model includes several variables that have a high p-value and should not be considered as meaningful predictors, and not statistically significant.
+
+
+##Forward Stepwise Method on 'TARGET_AMT'
+
+
+A stepwise approach was performed using a forward AIC (Akaike information criterion) method. 
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+#Multiple linear regression using stepwise methodology
+
+
+trainingdata_STEP1<-trainingdata%>%select(-TARGET_FLAG)
+
+
+all<-lm(TARGET_AMT~.,na.omit(trainingdata_STEP1))
+
+
+null=lm(TARGET_AMT~1, na.omit(trainingdata_STEP1))
+
+stepResults_STEP1<-step(null,scope=list(lower=null,upper=all),direction="forward")
+
+```
+
+
+Current optimal results from stepwise method with diagnostic plots
+
+
+```{r echo=FALSE}
+
+#stepResults
+
+sumary(stepResults_STEP1)
+
+par(mfrow=c(2,2))
+
+plot(stepResults_STEP1)
+
+```
+
+
+Discussion of coefficients: 
+
+
+Our model results show a very high increase in variance in the Q-Q plot, which suggests an extreme right-skew in our model. Each of the individual predictors are shown to be statistically significant. The positive and negative estimate values align intuitively with what one would expect (e.g. Urban residents have a higher potential for expensive claims).
+
+
+
+##Demographics Logit Model on 'TARGET_FLAG'
+
+
+A binary logit model was selected based on demographics of the driver. This includes Age, Sex, Marital Status, and Education. 
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+logit_demo <- trainingdata%>% dplyr::select(TARGET_FLAG, AGE, SEX, MSTATUS, EDUCATION_HSCHOOL_NODEGREE, EDUCATION_HSCHOOL_DEGREE, EDUCATION_BACHELORS, EDUCATION_MASTERS, EDUCATION_PHD)%>%na.omit()
+
+n <- dim(logit_demo)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- logit_demo[-test ,]
+
+data.test <- logit_demo[test,]
+
+logitDemoModel <- glm(TARGET_FLAG~.,family=binomial(link='logit'),data=data.train)
+
+
+predEvalDemoModel <- predict(logitDemoModel,newdata=data.test,type='response')
+
+DemoModel.pred <- ifelse(predEvalDemoModel > 0.5,1,0)
+
+cm1<-confusionMatrix(data=DemoModel.pred, reference=data.test$TARGET_FLAG)
+
+accuracy1<-cm1$overall["Accuracy"]
+
+recall1 <- cm1$byClass['Sensitivity']
+
+specificity1 <- cm1$byClass['Specificity']
+
+precision1 <- cm1$byClass['Pos Pred Value'] 
+
+f_measure1 <- 2 * ((precision1 * recall1) / (precision1 + recall1))
+
+```
+
+
+```{r echo=FALSE}
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag <- glm.diag(logitDemoModel )
+
+glm.diag.plots(logitDemoModel , logmod.diag)
+
+par(old.par)
+
+sumary(logitDemoModel )
+
+```
+
+
+Discussion of model:
+
+
+Each of the values are significant with the exception of 'SEX'. Overall, we have a simple and intuitive model that could be fielded for selection with the removal of the aforementioned variable.
+
+
+
+##Work and Driving History Logit Model on 'TARGET_FLAG'
+
+
+
+A second model was used based on variables focused on job history and driving history.
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+logit_work <- trainingdata%>% dplyr::select(TARGET_FLAG, YOJ, INCOME, TRAVTIME, BLUEBOOK, RED_CAR, OLDCLAIM, CLM_FREQ, REVOKED, MVR_PTS, CAR_AGE, URBANICITY, JOB_BLUECOLLAR, JOB_PROFESSIONAL, JOB_MANAGER, JOB_LAWYER, JOB_HOME_MAKER, JOB_STUDENT, JOB_DOCTOR)%>%na.omit()
+
+n <- dim(logit_work)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- logit_work[-test ,]
+
+data.test <- logit_work[test,]
+
+logitWorkModel <- glm(TARGET_FLAG~.,family=binomial(link='logit'),data=data.train)
+
+
+predEvalWorkModel <- predict(logitWorkModel,newdata=data.test,type='response')
+
+WorkModel.pred <- ifelse(predEvalWorkModel > 0.5,1,0)
+
+cm2<-confusionMatrix(data=WorkModel.pred, reference=data.test$TARGET_FLAG)
+
+accuracy2<-cm2$overall["Accuracy"]
+
+recall2 <- cm2$byClass['Sensitivity']
+
+specificity2 <- cm2$byClass['Specificity']
+
+precision2 <- cm2$byClass['Pos Pred Value'] 
+
+f_measure2 <- 2 * ((precision2 * recall2) / (precision2 + recall2))
+
+```
+
+
+```{r echo=FALSE}
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag <- glm.diag(logitWorkModel)
+
+glm.diag.plots(logitWorkModel, logmod.diag)
+
+par(old.par)
+
+sumary(logitWorkModel)
+
+```
+
+
+Discussion of model:
+
+
+Each of the values are significant with the exceptions of 'YOJ' and 'CAR_AGE'. As with demographics model, this is another simple and intuitive model.
+
+
+##Logit Model with all variables on 'TARGET_FLAG'
+
+
+The third model takes each of the variables and trains them using the logit method against the binary response variable 'TARGET_FLAG'.
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+trainingdata_ALL<-trainingdata%>%dplyr::select(-TARGET_AMT)%>%na.omit()
+
+n <- dim(trainingdata_ALL)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- trainingdata_ALL[-test ,]
+
+data.test <- trainingdata_ALL[test,]
+
+logitALLModel <- glm(TARGET_FLAG~.,family=binomial(link='logit'),data=data.train)
+
+resultSum<- summary(logitALLModel)
+
+pValues<-sort(resultSum$coefficients[,4])
+
+
+predEvalAllModel <- predict(logitALLModel,newdata=data.test,type='response')
+
+AllModel.pred <- ifelse(predEvalAllModel > 0.5,1,0)
+
+cm3<-confusionMatrix(data=AllModel.pred, reference=data.test$TARGET_FLAG)
+
+accuracy3<-cm3$overall["Accuracy"]
+
+recall3 <- cm3$byClass['Sensitivity']
+
+specificity3 <- cm3$byClass['Specificity']
+
+precision3 <- cm3$byClass['Pos Pred Value'] 
+
+f_measure3 <- 2 * ((precision3 * recall3) / (precision3 + recall3))
+
+```
+
+
+```{r echo=FALSE}
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag2 <- glm.diag(logitALLModel )
+
+glm.diag.plots(logitALLModel , logmod.diag2)
+
+par(old.par)
+
+sumary(logitALLModel)
+
+```
+
+
+*P Values less than 0.05.
+
+
+```{r echo=FALSE}
+
+subset(pValues, pValues<0.05)
+
+```
+
+
+Discussion of model:
+
+
+The above data show the variables with significant p-values(<0.05). Intuition also suggests that the positive and negative estimates are accurate. Removing those values not significant should improve collinearity and would refine our model further.
+
+
+
+
+
+***
+
+
+#SELECT MODELS 
+
+
+
+```{r echo=FALSE, message=FALSE}
+
+#Classification error calculation
+
+trainingdata$logitALLpred<-predict(logitALLModel,trainingdata,type='response')
+
+trainingdata$logitDemopred<-predict(logitDemoModel,trainingdata,type='response')
+
+trainingdata$logitWorkpred<-predict(logitWorkModel,trainingdata,type='response')
+
+err3 <- the.classif.err.rate(trainingdata, "logitALLpred")
+
+err2 <- the.classif.err.rate(trainingdata,"logitWorkpred")
+
+err1 <- the.classif.err.rate(trainingdata, "logitDemopred")
+
+
+#ROC / AUC calculation
+
+rocModel3 <- roc(TARGET_FLAG~logitALLpred, trainingdata)
+
+rocModel2 <- roc(TARGET_FLAG~logitWorkpred, trainingdata)
+
+rocModel1 <- roc(TARGET_FLAG~logitDemopred, trainingdata)
+
+aucModel3 <- auc(rocModel3)
+
+aucModel2 <- auc(rocModel2)
+
+aucModel1 <- auc(rocModel1)
+
+
+selectStatistics <- matrix(c(accuracy1,precision1,recall1,specificity1,f_measure1,err1,aucModel1,accuracy2,precision2,recall2,specificity2,f_measure2,err2,aucModel2,accuracy3,precision3,recall3,specificity3,f_measure3,err3,aucModel3), ncol=3)
+
+colnames(selectStatistics) <- c('Demographics', 'Work', 'All')
+
+rownames(selectStatistics) <- c('Accuracy', 'Precision','Sensitivity','Specificity','F1 Score','CER','AUC')
+
+```
+
+
+```{r echo=FALSE, message=FALSE}
+
+pander(selectStatistics)
+
+```
+
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+rocModel3 <- roc(factor(TARGET_FLAG) ~ logitALLpred, data=trainingdata)
+
+rocModel2 <- roc(factor(TARGET_FLAG) ~ logitWorkpred, data=trainingdata)
+
+rocModel1 <- roc(factor(TARGET_FLAG) ~ logitDemopred, data=trainingdata)
+
+```
+
+```{r echo=FALSE}
+
+par(mfrow=c(2,2))
+
+plot(rocModel3,main="logitALLpred")
+
+plot(rocModel2,main="logitWorkpred")
+
+plot(rocModel1,main="logitDemopred")
+
+par(mfrow=c(1,1))
+
+```
+
+
+If we were to tally a score from our metrics, the complete *all* model has the majority of positive model metrics as it exhibits an advantage in Accuracy, Precision, and Area Under the Curve.
+
+
+```{r}
+
+bestModel=logitALLModel
+
+```
+
+
+
+
+#EVALUATION DATA
+
+Run evaluation data through the selected model. Make predictions. Make sure we include appropriate transformations / calculations. 
+
+
+
+##Data transformations
+
+
+Evaluation data was treated to the same variable transformations as the original training data set.
+
+
+```{r echo= FALSE, message=FALSE}
+
+
+evaldata <- evaluationData
+
+id <- which(names(evaldata)%in%c("HOME_VAL", "BLUEBOOK", "OLDCLAIM", "INCOME"))
+
+evaldata[, id] <- lapply(evaldata[, id], function(x) as.numeric(gsub("[$,]","", x)))
+
+```
+
+
+```{r echo= FALSE, message=FALSE}
+
+evaldata$KIDSDRIV<-ifelse(evaldata$KIDSDRIV == 0, 0, 1)
+
+evaldata$HOMEKIDS<-ifelse(evaldata$HOMEKIDS == 0, 0, 1)
+
+#evaldata$MSTATUS_MARRIED  = ifelse(evaldata$MSTATUS=="Yes", 1, 0)
+
+#evaldata$MSTATUS_UNMARRIED = ifelse(evaldata$MSTATUS=="z_No", 1, 0)
+
+
+evaldata$MSTATUS = ifelse(evaldata$MSTATUS=="Yes", 1, 0) 
+
+
+evaldata$INCOME<-sqrt(evaldata$INCOME)
+
+
+evaldata$HOMEOWNER<-ifelse(evaldata$HOME_VAL == 0, 0, 1)
+
+is.na(evaldata$HOME_VAL) <- !evaldata$HOME_VAL
+
+evaldata$HOME_VAL <- evaldata$HOME_VAL^(1/6)
+
+
+evaldata$MSTATUS = ifelse(evaldata$MSTATUS=="Yes", 1, 0)
+
+evaldata$PARENT1 = ifelse(evaldata$PARENT1=="Yes", 1, 0)
+
+
+evaldata$SEX  = ifelse(evaldata$SEX=="z_F", 1, 0)
+
+
+evaldata$EDUCATION_HSCHOOL_NODEGREE  = ifelse(evaldata$EDUCATION=="<High School", 1, 0)
+
+evaldata$EDUCATION_HSCHOOL_DEGREE = ifelse(evaldata$EDUCATION=="z_High School", 1, 0)
+
+evaldata$EDUCATION_BACHELORS  = ifelse(evaldata$EDUCATION=="Bachelors", 1, 0)
+
+evaldata$EDUCATION_MASTERS = ifelse(evaldata$EDUCATION=="Masters", 1, 0)
+
+evaldata$EDUCATION_PHD  = ifelse(evaldata$EDUCATION=="PhD", 1, 0)
+
+
+evaldata$JOB_BLUECOLLAR  = ifelse(evaldata$JOB=="z_Blue Collar", 1, 0)
+
+evaldata$JOB_CLERICAL = ifelse(evaldata$JOB=="Clerical", 1, 0)
+
+evaldata$JOB_PROFESSIONAL  = ifelse(evaldata$JOB=="Professional", 1, 0)
+
+evaldata$JOB_MANAGER = ifelse(evaldata$JOB=="Manager", 1, 0)
+
+evaldata$JOB_LAWYER  = ifelse(evaldata$JOB=="Lawyer", 1, 0)
+
+evaldata$JOB_HOME_MAKER = ifelse(evaldata$JOB=="Home Maker", 1, 0)
+
+evaldata$JOB_STUDENT  = ifelse(evaldata$JOB=="Student", 1, 0)
+
+evaldata$JOB_DOCTOR  = ifelse(evaldata$JOB=="Doctor", 1, 0)
+
+
+evaldata$TRAVTIME<-sqrt(evaldata$TRAVTIME)
+
+evaldata$CAR_USE_PRIV  = ifelse(evaldata$CAR_USE=="Private", 1, 0)
+
+evaldata$CAR_USE_COMM = ifelse(evaldata$CAR_USE=="Commercial", 1, 0)
+
+
+evaldata$CAR_USE = ifelse(evaldata$CAR_USE=="Private", 1, 0)
+
+
+evaldata$BLUEBOOK<-sqrt(evaldata$BLUEBOOK)
+
+
+evaldata$TIF_five  = ifelse(evaldata$TIF> 5, 1, 0)
+
+#t.test(formula = evaldata$TARGET_FLAG ~ evaldata$TIF_five)
+
+
+
+evaldata$CAR_TYPE_MINIVAN  = ifelse(evaldata$CAR_TYPE=="Minivan", 1, 0)
+
+evaldata$CAR_TYPE_TRUCK  = ifelse(evaldata$CAR_TYPE=="Panel Truck", 1, 0)
+
+evaldata$CAR_TYPE_PICKUP = ifelse(evaldata$CAR_TYPE=="Pickup", 1, 0)
+
+evaldata$CAR_TYPE_SPORTS  = ifelse(evaldata$CAR_TYPE=="Sports Car", 1, 0)
+
+evaldata$CAR_TYPE_VAN = ifelse(evaldata$CAR_TYPE=="Van", 1, 0)
+
+evaldata$CAR_TYPE_SUV  = ifelse(evaldata$CAR_TYPE=="z_SUV", 1, 0)
+
+
+evaldata$RED_CAR_YES  = ifelse(evaldata$RED_CAR=="yes", 1, 0)
+
+evaldata$RED_CAR_NO = ifelse(evaldata$RED_CAR=="no", 1, 0)
+
+
+evaldata$RED_CAR = ifelse(evaldata$RED_CAR=="yes", 1, 0)
+
+
+evaldata$OLDCLAIM <-ifelse(evaldata$OLDCLAIM ==  0,0,1)
+
+
+evaldata$CLM_FREQ<-ifelse(evaldata$CLM_FREQ == 0, 0, 1)
+
+
+evaldata$REVOKED_YES  = ifelse(evaldata$REVOKED=="Yes", 1, 0)
+
+evaldata$REVOKED_NO = ifelse(evaldata$REVOKED=="No", 1, 0)
+
+evaldata$REVOKED  = ifelse(evaldata$REVOKED=="Yes", 1, 0)
+
+
+evaldata$CAR_AGE[evaldata$CAR_AGE<0] <- 1
+
+evaldata$NEWCAR <-ifelse(evaldata$CAR_AGE ==  1,1,0)
+
+evaldata$CAR_AGE[evaldata$CAR_AGE == 1 & is.numeric(evaldata$CAR_AGE)] <- NA
+
+
+evaldata$URBANICITY_URBAN  = ifelse(evaldata$URBANICITY=="Highly Urban/ Urban", 1, 0)
+
+evaldata$URBANICITY_RURAL = ifelse(evaldata$URBANICITY=="z_Highly Rural/ Rural", 1, 0)
+
+###################
+
+
+# 1 for urban, 0 for rural
+
+evaldata$URBANICITY  = ifelse(evaldata$URBANICITY=="Highly Urban/ Urban", 1, 0)
+
+```
+
+
+```{r echo= FALSE, message=FALSE}
+
+#Truncating the original columns
+
+#evaldata$URBANICITY <- NULL
+
+#evaldata$MSTATUS <- NULL
+
+#evaldata$SEX <- NULL
+
+#evaldata$REVOKED <- NULL
+
+#evaldata$CAR_USE <- NULL
+
+evaldata$CAR_TYPE <- NULL
+
+evaldata$EDUCATION <- NULL
+
+evaldata$JOB <- NULL
+
+evaldata$PARENT1 <- NULL
+
+#evaldata$RED_CAR <- NULL
+
+```
+
+
+
+
+
+##Prediction
+
+```{r echo=FALSE}
+
+eval_logit_demo <- evaldata%>% dplyr::select(TARGET_FLAG,AGE, SEX, MSTATUS,EDUCATION_HSCHOOL_NODEGREE,EDUCATION_HSCHOOL_DEGREE,EDUCATION_BACHELORS,EDUCATION_MASTERS,EDUCATION_PHD)%>%na.omit()
+
+
+eval_logit_work <- evaldata%>% dplyr::select(TARGET_FLAG, YOJ, INCOME, TRAVTIME, BLUEBOOK, RED_CAR, OLDCLAIM, CLM_FREQ, REVOKED, MVR_PTS, CAR_AGE, URBANICITY, JOB_BLUECOLLAR, JOB_PROFESSIONAL, JOB_MANAGER, JOB_LAWYER, JOB_HOME_MAKER, JOB_STUDENT, JOB_DOCTOR)%>%na.omit()
+
+
+evaldata_ALL<-evaldata%>%dplyr::select(-TARGET_AMT, -TARGET_FLAG)%>%na.omit()
+
+
+
+#Logit model predicted probabilities
+
+evaldata_ALL$targetprob<-predict(bestModel, newdata=evaldata_ALL, type='response')
+
+evaldata_ALL$TARGET_FLAG <- ifelse(evaldata_ALL$targetprob > 0.5,1,0)
+
+
+
+#Logit model predicted probabilities
+
+#evaldata.a$targetprob<-predict(bestModel, newdata=evaldata.a, type='response')
+
+#evaldata.a$target <- ifelse(evaldata.a$targetprob > 0.5,1,0)
+
+```
+
+
+Sample of model data that resulted in a probability greater than 50% is shown below with the model probabilities as targetprob and the resulting target value.
+
+
+```{r}
+
+head(evaldata_ALL[which(evaldata_ALL$TARGET_FLAG == 1),]) #Overview of the data
+
+```
+
+
+Sample of model data that resulted in a probability less than 50% is shown below with the model probabilities as targetprob and the resulting target value.
+
+
+```{r}
+
+head(evaldata_ALL[which(evaldata_ALL$TARGET_FLAG == 0),]) #Overview of the data
+
+```
+
+Summary of the target probablities and the resulting target value
+
+```{r}
+
+summary(evaldata_ALL$targetprob) #summary of the predicted column
+
+```
+
+
+
+Applying our chosen model to the evaluation data we found the mean of the predicted values was `r mean(evaldata_ALL$TARGET_FLAG)` with a standard deviation of `r sd(evaldata_ALL$TARGET_FLAG)`. This can be compared to the mean and standard deviation of the training data set used to create the model of `r meanData` and `r sdData`. Below we show the results of our model and a test on a single row of data.
+
+
+```{r echo=FALSE}
+
+#score the test data and plot
+
+plot(data.frame('Predicted'=predict(bestModel, evaldata_ALL,interval='confidence'), 'Observed'=evaldata_ALL$targetprob))
+
+#append scored data
+
+evaldata.scored <- cbind(evaldata_ALL,'target_new'=predict(bestModel,evaldata_ALL,interval='confidence'))
+
+```
+
+
+```{r}
+
+predict(bestModel, evaldata_ALL[13,])
+
+```
+
+
+
+```{r echo=FALSE}
+
+predplot(bestModel,main='Predicted versus Observed values')
+
+```
+
+
+
+```{r, echo=FALSE}
+
+g1 <- ggplot(data = trainingdata, aes(x = logitALLpred) )+
+
+  geom_density(alpha = .2, fill = "003333")+
+
+  ggtitle("Training Target Density")  # maybe density isn't a good picture ? 
+
+g2 <- ggplot(data = evaldata_ALL, aes(x = targetprob) )+
+
+  geom_density(alpha = .2, fill = "#CC6666")+
+
+  ggtitle("Predicted Value Density")
+
+
+grid.arrange(g1,g2, ncol=2, top ="Crimes Distributions Actual vs Predicted")
+
+```
+
+
+
+#APPENDIX
+
+
+```{r eval=FALSE}
+
+the.classif.err.rate <- function(df, predicted, actual="TARGET_FLAG"){
+
+   #obtaining the confusion matrix
+
+      conf.mat <- the.conf.matrix(df, predicted)
+
+   # Assigning TP, FN, FP and TN using the confusion matrix
+
+      TN <- conf.mat[1,1]
+
+      FN <- conf.mat[1,2]
+
+      FP <- conf.mat[2,1]
+
+      TP <- conf.mat[2,2]
+
+   #computing the classification error rate
+
+      myclasserrate <- (FP + FN) / (TP + FP + TN + FN)
+
+      return(as.numeric(myclasserrate))
+
+}
+
+
+
+
+the.conf.matrix <- function(df, predicted, actual="TARGET_FLAG"){
+
+   conf.mat <- table(df[,predicted], df[,actual])
+
+#   conf.mat <- as.matrix(table(df[,predicted], df[,actual]))
+
+   return(conf.mat)
+
+}
+
+
+id <- which(names(trainingdata)%in%c("HOME_VAL", "BLUEBOOK", "OLDCLAIM", "INCOME"))
+
+trainingdata[, id] <- lapply(trainingdata[, id], function(x) as.numeric(gsub("[$,]","", x)))
+
+
+nro <-nrow(trainingdata)
+
+nco <- ncol(trainingdata)
+
+meanData <- mean(trainingdata$TARGET_AMT)
+
+sdData <- sd(trainingdata$TARGET_AMT)
+
+meanData1 <- mean(trainingdata$TARGET_FLAG)
+
+sdData1 <- sd(trainingdata$TARGET_FLAG)
+
+str(trainingdata)
+
+
+sapply(trainingdata,function(x) sum(is.na(x)))
+
+
+###################
+
+#KIDSDRIV
+
+par(mfrow=c(3,2))
+
+mosaicplot(trainingdata$KIDSDRIV~trainingdata$TARGET_FLAG,main = "KIDSDRIV BEFORE",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+#This data has many 0s.
+
+###################
+
+trainingdata$KIDSDRIV<-ifelse(trainingdata$KIDSDRIV == 0, 0, 1)
+
+###################
+
+mosaicplot(trainingdata$KIDSDRIV~trainingdata$TARGET_FLAG,main = "KIDSDRIV AFTER",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+
+###################
+
+#AGE
+
+boxplot(trainingdata$AGE,main="AGE")
+
+hist(trainingdata$AGE,main="AGE")
+
+#normal distribution
+
+###################
+
+
+###################
+
+
+###################
+
+#HOMEKIDS
+
+mosaicplot(trainingdata$HOMEKIDS~trainingdata$TARGET_FLAG,main = "HOMEKIDS BEFORE",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+#This data has many 0s.
+
+###################
+
+trainingdata$HOMEKIDS<-ifelse(trainingdata$HOMEKIDS == 0, 0, 1)
+
+###################
+
+mosaicplot(trainingdata$HOMEKIDS~trainingdata$TARGET_FLAG,main = "HOMEKIDS AFTER",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+
+###################
+
+#YOJ
+
+boxplot(trainingdata$YOJ,main="YOJ")
+
+hist(trainingdata$YOJ,main="YOJ")
+
+#normal distribution
+
+###################
+
+
+
+###################
+
+#INCOME
+
+hist(trainingdata$INCOME,main="INCOME Before")
+
+###################
+
+trainingdata$INCOME<-sqrt(trainingdata$INCOME)
+
+###################
+
+hist(sqrt(trainingdata$INCOME),main="INCOME After")
+
+###################
+
+
+###################
+
+#PARENT1
+
+mosaicplot(trainingdata$PARENT1~trainingdata$TARGET_FLAG,main = "PARENT1",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+plot(trainingdata$PARENT1,main="PARENT1")
+
+###################
+
+#trainingdata$PARENT_YES  = ifelse(trainingdata$PARENT1=="Yes", 1, 0)
+
+#trainingdata$PARENT_NO = ifelse(trainingdata$PARENT1=="No", 1, 0)
+
+trainingdata$PARENT1 = ifelse(trainingdata$PARENT1=="Yes", 1, 0)
+
+###################
+
+
+###################
+
+#HOME_VAL
+
+
+hist(trainingdata$HOME_VAL,main="HOME_VAL Before")
+
+numZero<-length(which(trainingdata$HOME_VAL==0))/nrow(trainingdata)
+
+#bimodal, right-tailed. 28% are zero.  New variable?
+
+###################
+
+trainingdata$HOMEOWNER<-ifelse(trainingdata$HOME_VAL == 0, 0, 1)
+
+is.na(trainingdata$HOME_VAL) <- !trainingdata$HOME_VAL
+
+trainingdata$HOME_VAL <- trainingdata$HOME_VAL^(1/6)
+
+###################
+
+hist(trainingdata$HOME_VAL,main="HOME_VAL After")
+
+
+###################
+
+#MSTATUS
+
+
+plot(trainingdata$MSTATUS,main='MSTATUS')
+
+mosaicplot(trainingdata$MSTATUS~trainingdata$TARGET_FLAG,main = "MSTATUS",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+#trainingdata$MSTATUS_MARRIED  = ifelse(trainingdata$MSTATUS=="Yes", 1, 0)
+
+#trainingdata$MSTATUS_UNMARRIED = ifelse(trainingdata$MSTATUS=="z_No", 1, 0)
+
+###################
+
+# Transformed 1 if married, 0 if not
+
+trainingdata$MSTATUS = ifelse(trainingdata$MSTATUS=="Yes", 1, 0) 
+
+
+###################
+
+#SEX
+
+
+plot(trainingdata$SEX,main='SEX')
+
+mosaicplot(trainingdata$SEX~trainingdata$TARGET_FLAG,main = "SEX",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+
+###################
+
+###################
+
+#trainingdata$FEMALE  = ifelse(trainingdata$SEX=="z_F", 1, 0)
+
+#trainingdata$MALE = ifelse(trainingdata$SEX=="M", 1, 0)
+
+###################
+
+# Transformed 0 if male, 1 if female
+
+trainingdata$SEX  = ifelse(trainingdata$SEX=="z_F", 1, 0)  # female = 1, male = 0
+
+
+###################
+
+#EDUCATION
+
+mosaicplot(trainingdata$EDUCATION~trainingdata$TARGET_FLAG,main = "EDUCATION",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+#convert to ordinal/numeric?
+
+###################
+
+trainingdata$EDUCATION_HSCHOOL_NODEGREE  = ifelse(trainingdata$EDUCATION=="<High School", 1, 0)
+
+trainingdata$EDUCATION_HSCHOOL_DEGREE = ifelse(trainingdata$EDUCATION=="z_High School", 1, 0)
+
+trainingdata$EDUCATION_BACHELORS  = ifelse(trainingdata$EDUCATION=="Bachelors", 1, 0)
+
+trainingdata$EDUCATION_MASTERS = ifelse(trainingdata$EDUCATION=="Masters", 1, 0)
+
+trainingdata$EDUCATION_PHD  = ifelse(trainingdata$EDUCATION=="PhD", 1, 0)
+
+###################
+
+
+###################
+
+#JOB
+
+mosaicplot(trainingdata$JOB~trainingdata$TARGET_FLAG,main = "JOB",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$JOB_BLUECOLLAR  = ifelse(trainingdata$JOB=="z_Blue Collar", 1, 0)
+
+trainingdata$JOB_CLERICAL = ifelse(trainingdata$JOB=="Clerical", 1, 0)
+
+trainingdata$JOB_PROFESSIONAL  = ifelse(trainingdata$JOB=="Professional", 1, 0)
+
+trainingdata$JOB_MANAGER = ifelse(trainingdata$JOB=="Manager", 1, 0)
+
+trainingdata$JOB_LAWYER  = ifelse(trainingdata$JOB=="Lawyer", 1, 0)
+
+trainingdata$JOB_HOME_MAKER = ifelse(trainingdata$JOB=="Home Maker", 1, 0)
+
+trainingdata$JOB_STUDENT  = ifelse(trainingdata$JOB=="Student", 1, 0)
+
+trainingdata$JOB_DOCTOR  = ifelse(trainingdata$JOB=="Doctor", 1, 0)
+
+###################
+
+
+###################
+
+#TRAVTIME
+
+
+hist(trainingdata$TRAVTIME,main='TRAVTIME Before')
+
+#Right-tail, log transformation?
+
+###################
+
+trainingdata$TRAVTIME<-sqrt(trainingdata$TRAVTIME)
+
+###################
+
+hist(trainingdata$TRAVTIME,main='TRAVTIME After')
+
+
+
+###################
+
+#CAR_USE
+
+par(mfrow=c(3,2))
+
+mosaicplot(trainingdata$CAR_USE~trainingdata$TARGET_FLAG,main = "CAR_USE",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$CAR_USE_PRIV  = ifelse(trainingdata$CAR_USE=="Private", 1, 0)
+
+trainingdata$CAR_USE_COMM = ifelse(trainingdata$CAR_USE=="Commercial", 1, 0)
+
+###################
+
+# Transformed 1 if use is private, 0 if commercial
+
+trainingdata$CAR_USE = ifelse(trainingdata$CAR_USE=="Private", 1, 0)
+
+
+
+###################
+
+#BLUEBOOK
+
+
+hist(trainingdata$BLUEBOOK,main="BLUEBOOK BEFORE")
+
+#Right-tail, log transformation?
+
+###################
+
+trainingdata$BLUEBOOK<-sqrt(trainingdata$BLUEBOOK)
+
+###################
+
+hist(trainingdata$BLUEBOOK,main="BLUEBOOK AFTER")
+
+
+
+
+
+###################
+
+#TIF
+
+
+hist(trainingdata$TIF, main="TIF BEFORE")
+
+#Right-tail, log transformation?
+
+###################
+
+# under 6 years accounts for about 50% of the data but stat. Sig. diff means of target btween two categories
+
+trainingdata$TIF_five  = ifelse(trainingdata$TIF> 5, 1, 0)
+
+t.test(formula = trainingdata$TARGET_FLAG ~ trainingdata$TIF_five)
+
+
+mosaicplot(trainingdata$TIF_five~trainingdata$TARGET_FLAG,main = "TIF > 5 Yrs",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+
+###################
+
+#CAR_TYPE
+
+mosaicplot(trainingdata$CAR_TYPE~trainingdata$TARGET_FLAG,main = "CAR_TYPE",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$CAR_TYPE_MINIVAN  = ifelse(trainingdata$CAR_TYPE=="Minivan", 1, 0)
+
+trainingdata$CAR_TYPE_TRUCK  = ifelse(trainingdata$CAR_TYPE=="Panel Truck", 1, 0)
+
+trainingdata$CAR_TYPE_PICKUP = ifelse(trainingdata$CAR_TYPE=="Pickup", 1, 0)
+
+trainingdata$CAR_TYPE_SPORTS  = ifelse(trainingdata$CAR_TYPE=="Sports Car", 1, 0)
+
+trainingdata$CAR_TYPE_VAN = ifelse(trainingdata$CAR_TYPE=="Van", 1, 0)
+
+trainingdata$CAR_TYPE_SUV  = ifelse(trainingdata$CAR_TYPE=="z_SUV", 1, 0)
+
+###################
+
+
+###################
+
+#RED_CAR
+
+mosaicplot(trainingdata$RED_CAR~trainingdata$TARGET_FLAG,main = "RED_CAR",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$RED_CAR_YES  = ifelse(trainingdata$RED_CAR=="yes", 1, 0)
+
+trainingdata$RED_CAR_NO = ifelse(trainingdata$RED_CAR=="no", 1, 0)
+
+###################
+
+
+# Transformed 1 yes, 0 if no if we want to keep just 1 var
+
+trainingdata$RED_CAR = ifelse(trainingdata$RED_CAR=="yes", 1, 0)
+
+
+
+###################
+
+#OLDCLAIM
+
+
+hist(trainingdata$OLDCLAIM,main='OLDCLAIM Before')
+
+#Right-tail, log transformation?
+
+###################
+
+#trainingdata$OLDCLAIM<-log(trainingdata$OLDCLAIM)
+
+trainingdata$OLDCLAIM <-ifelse(trainingdata$OLDCLAIM ==  0,0,1)
+
+###################
+
+mosaicplot(trainingdata$OLDCLAIM~trainingdata$TARGET_FLAG,main = "HAS OLD CLAIM",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+
+###################
+
+#CLM_FREQ
+
+
+mosaicplot(trainingdata$CLM_FREQ~trainingdata$TARGET_FLAG,main = "CLM_FREQ Before",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+#This data has many 0s. Dummy binary variables?
+
+###################
+
+trainingdata$CLM_FREQ<-ifelse(trainingdata$CLM_FREQ == 0, 0, 1)
+
+###################
+
+mosaicplot(trainingdata$CLM_FREQ~trainingdata$TARGET_FLAG,main = "CLM_FREQ After",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+
+###################
+
+#REVOKED
+
+mosaicplot(trainingdata$REVOKED~trainingdata$TARGET_FLAG,main = "REVOKED",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$REVOKED_YES  = ifelse(trainingdata$REVOKED=="Yes", 1, 0)
+
+trainingdata$REVOKED_NO = ifelse(trainingdata$REVOKED=="No", 1, 0)
+
+###################
+
+trainingdata$REVOKED  = ifelse(trainingdata$REVOKED=="Yes", 1, 0)
+
+
+
+###################
+
+#MVR_PTS
+
+
+hist(trainingdata$MVR_PTS,main="MVR_PTS Before")
+
+#Right-tailed, log transform/dummy variables?
+
+###################
+
+#trainingdata$MVR_PTS<-log(trainingdata$MVR_PTS)
+
+###################
+
+hist(trainingdata$MVR_PTS,main="MVR_PTS After")
+
+
+###################
+
+#CAR_AGE
+
+
+hist(trainingdata$CAR_AGE,main="CAR_AGE Before")
+
+#summary(trainingdata$CAR_AGE)
+
+#Remove negative values! Convert into dummy variables? Most data is 1 year.
+
+###################
+
+trainingdata$CAR_AGE[trainingdata$CAR_AGE<0] <- 1
+
+trainingdata$NEWCAR <-ifelse(trainingdata$CAR_AGE ==  1,1,0)
+
+trainingdata$CAR_AGE[trainingdata$CAR_AGE == 1 & is.numeric(trainingdata$CAR_AGE)] <- NA
+
+#trainingdata$CAR_AGE<-log(trainingdata$CAR_AGE)
+
+###################
+
+hist(trainingdata$CAR_AGE,main="CAR_AGE After")
+
+
+###################
+
+#URBANICITY
+
+mosaicplot(trainingdata$URBANICITY~trainingdata$TARGET_FLAG,main = "URBANICITY",xlab = "", ylab="TARGET_FLAG", cex = 0.75, color = TRUE)
+
+###################
+
+trainingdata$URBANICITY_URBAN  = ifelse(trainingdata$URBANICITY=="Highly Urban/ Urban", 1, 0)
+
+trainingdata$URBANICITY_RURAL = ifelse(trainingdata$URBANICITY=="z_Highly Rural/ Rural", 1, 0)
+
+###################
+
+
+# 1 for urban, 0 for rural
+
+trainingdata$URBANICITY  = ifelse(trainingdata$URBANICITY=="Highly Urban/ Urban", 1, 0)
+
+
+#Truncating the original columns
+
+#trainingdata$URBANICITY <- NULL
+
+#trainingdata$MSTATUS <- NULL
+
+#trainingdata$SEX <- NULL
+
+#trainingdata$REVOKED <- NULL
+
+#trainingdata$CAR_USE <- NULL
+
+trainingdata$CAR_TYPE <- NULL
+
+trainingdata$EDUCATION <- NULL
+
+trainingdata$JOB <- NULL
+
+trainingdata$PARENT1 <- NULL
+
+#trainingdata$RED_CAR <- NULL
+
+
+#creating subset for crashed cars
+
+trainingdata_crash <- trainingdata[which(trainingdata$TARGET_FLAG == 1),]
+
+
+all<-lm(TARGET_AMT~.,trainingdata_crash)
+
+hatv<-hatvalues(all)
+
+predictors<-row.names(trainingdata_crash)
+
+old.par <- par(mfrow=c(1, 2))
+
+halfnorm(hatv,labs=predictors,ylab="Leverages")
+
+#http://stats.stackexchange.com/questions/101274/how-to-interpret-a-qq-plot
+
+qqnorm(rstandard(all))
+
+abline(0,1)
+
+par(old.par)
+
+
+#Multiple linear regression using all variables
+
+trainingdata_FULL1<-trainingdata%>%select(-TARGET_FLAG)
+
+all<-lm(TARGET_AMT~.,na.omit(trainingdata_FULL1))
+
+null=lm(TARGET_AMT~1, na.omit(trainingdata_FULL1))
+
+full_results<- lm(TARGET_AMT~.,data=trainingdata_FULL1)
+
+
+#FULL MODEL
+
+sumary(full_results)
+
+par(mfrow=c(2,2))
+
+plot(full_results)
+
+
+#Multiple linear regression using stepwise methodology
+
+
+trainingdata_STEP1<-trainingdata%>%select(-TARGET_FLAG)
+
+
+all<-lm(TARGET_AMT~.,na.omit(trainingdata_STEP1))
+
+
+null=lm(TARGET_AMT~1, na.omit(trainingdata_STEP1))
+
+stepResults_STEP1<-step(null,scope=list(lower=null,upper=all),direction="forward")
+
+
+#stepResults
+
+sumary(stepResults_STEP1)
+
+par(mfrow=c(2,2))
+
+plot(stepResults_STEP1)
+
+
+logit_demo <- trainingdata%>% dplyr::select(TARGET_FLAG, AGE, SEX, MSTATUS, EDUCATION_HSCHOOL_NODEGREE, EDUCATION_HSCHOOL_DEGREE, EDUCATION_BACHELORS, EDUCATION_MASTERS, EDUCATION_PHD)%>%na.omit()
+
+n <- dim(logit_demo)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- logit_demo[-test ,]
+
+data.test <- logit_demo[test,]
+
+logitDemoModel <- glm(TARGET_FLAG~.,family=binomial(link='logit'),data=data.train)
+
+
+predEvalDemoModel <- predict(logitDemoModel,newdata=data.test,type='response')
+
+DemoModel.pred <- ifelse(predEvalDemoModel > 0.5,1,0)
+
+cm1<-confusionMatrix(data=DemoModel.pred, reference=data.test$TARGET_FLAG)
+
+accuracy1<-cm1$overall["Accuracy"]
+
+recall1 <- cm1$byClass['Sensitivity']
+
+specificity1 <- cm1$byClass['Specificity']
+
+precision1 <- cm1$byClass['Pos Pred Value'] 
+
+f_measure1 <- 2 * ((precision1 * recall1) / (precision1 + recall1))
+
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag <- glm.diag(logitDemoModel )
+
+glm.diag.plots(logitDemoModel , logmod.diag)
+
+par(old.par)
+
+sumary(logitDemoModel )
+
+
+logit_work <- trainingdata%>% dplyr::select(TARGET_FLAG, YOJ, INCOME, TRAVTIME, BLUEBOOK, RED_CAR, OLDCLAIM, CLM_FREQ, REVOKED, MVR_PTS, CAR_AGE, URBANICITY, JOB_BLUECOLLAR, JOB_PROFESSIONAL, JOB_MANAGER, JOB_LAWYER, JOB_HOME_MAKER, JOB_STUDENT, JOB_DOCTOR)%>%na.omit()
+
+n <- dim(logit_work)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- logit_work[-test ,]
+
+data.test <- logit_work[test,]
+
+logitWorkModel <- glm(TARGET_FLAG~.,family=binomial(link='logit'),data=data.train)
+
+
+predEvalWorkModel <- predict(logitWorkModel,newdata=data.test,type='response')
+
+WorkModel.pred <- ifelse(predEvalWorkModel > 0.5,1,0)
+
+cm2<-confusionMatrix(data=WorkModel.pred, reference=data.test$TARGET_FLAG)
+
+accuracy2<-cm2$overall["Accuracy"]
+
+recall2 <- cm2$byClass['Sensitivity']
+
+specificity2 <- cm2$byClass['Specificity']
+
+precision2 <- cm2$byClass['Pos Pred Value'] 
+
+f_measure2 <- 2 * ((precision2 * recall2) / (precision2 + recall2))
+
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag <- glm.diag(logitWorkModel)
+
+glm.diag.plots(logitWorkModel, logmod.diag)
+
+par(old.par)
+
+sumary(logitWorkModel)
+
+
+trainingdata_ALL<-trainingdata%>%dplyr::select(-TARGET_AMT)%>%na.omit()
+
+n <- dim(trainingdata_ALL)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- trainingdata_ALL[-test ,]
+
+data.test <- trainingdata_ALL[test,]
+
+logitALLModel <- glm(TARGET_FLAG~.,family=binomial(link='logit'),data=data.train)
+
+resultSum<- summary(logitALLModel)
+
+pValues<-sort(resultSum$coefficients[,4])
+
+
+predEvalAllModel <- predict(logitALLModel,newdata=data.test,type='response')
+
+AllModel.pred <- ifelse(predEvalAllModel > 0.5,1,0)
+
+cm3<-confusionMatrix(data=AllModel.pred, reference=data.test$TARGET_FLAG)
+
+accuracy3<-cm3$overall["Accuracy"]
+
+recall3 <- cm3$byClass['Sensitivity']
+
+specificity3 <- cm3$byClass['Specificity']
+
+precision3 <- cm3$byClass['Pos Pred Value'] 
+
+f_measure3 <- 2 * ((precision3 * recall3) / (precision3 + recall3))
+
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag2 <- glm.diag(logitALLModel )
+
+glm.diag.plots(logitALLModel , logmod.diag2)
+
+par(old.par)
+
+sumary(logitALLModel)
+
+
+subset(pValues, pValues<0.05)
+
+
+#Classification error calculation
+
+trainingdata$logitALLpred<-predict(logitALLModel,trainingdata,type='response')
+
+trainingdata$logitDemopred<-predict(logitDemoModel,trainingdata,type='response')
+
+trainingdata$logitWorkpred<-predict(logitWorkModel,trainingdata,type='response')
+
+err3 <- the.classif.err.rate(trainingdata, "logitALLpred")
+
+err2 <- the.classif.err.rate(trainingdata,"logitWorkpred")
+
+err1 <- the.classif.err.rate(trainingdata, "logitDemopred")
+
+
+#ROC / AUC calculation
+
+rocModel3 <- roc(TARGET_FLAG~logitALLpred, trainingdata)
+
+rocModel2 <- roc(TARGET_FLAG~logitWorkpred, trainingdata)
+
+rocModel1 <- roc(TARGET_FLAG~logitDemopred, trainingdata)
+
+aucModel3 <- auc(rocModel3)
+
+aucModel2 <- auc(rocModel2)
+
+aucModel1 <- auc(rocModel1)
+
+
+selectStatistics <- matrix(c(accuracy1,precision1,recall1,specificity1,f_measure1,err1,aucModel1,accuracy2,precision2,recall2,specificity2,f_measure2,err2,aucModel2,accuracy3,precision3,recall3,specificity3,f_measure3,err3,aucModel3), ncol=3)
+
+colnames(selectStatistics) <- c('Demographics', 'Work', 'All')
+
+rownames(selectStatistics) <- c('Accuracy', 'Precision','Sensitivity','Specificity','F1 Score','CER','AUC')
+
+
+pander(selectStatistics)
+
+
+rocModel3 <- roc(factor(TARGET_FLAG) ~ logitALLpred, data=trainingdata)
+
+rocModel2 <- roc(factor(TARGET_FLAG) ~ logitWorkpred, data=trainingdata)
+
+rocModel1 <- roc(factor(TARGET_FLAG) ~ logitDemopred, data=trainingdata)
+
+
+par(mfrow=c(2,2))
+
+plot(rocModel3,main="logitALLpred")
+
+plot(rocModel2,main="logitWorkpred")
+
+plot(rocModel1,main="logitDemopred")
+
+par(mfrow=c(1,1))
+
+
+bestModel=logitALLModel
+
+
+evaldata <- evaluationData
+
+id <- which(names(evaldata)%in%c("HOME_VAL", "BLUEBOOK", "OLDCLAIM", "INCOME"))
+
+evaldata[, id] <- lapply(evaldata[, id], function(x) as.numeric(gsub("[$,]","", x)))
+
+
+evaldata$KIDSDRIV<-ifelse(evaldata$KIDSDRIV == 0, 0, 1)
+
+evaldata$HOMEKIDS<-ifelse(evaldata$HOMEKIDS == 0, 0, 1)
+
+#evaldata$MSTATUS_MARRIED  = ifelse(evaldata$MSTATUS=="Yes", 1, 0)
+
+#evaldata$MSTATUS_UNMARRIED = ifelse(evaldata$MSTATUS=="z_No", 1, 0)
+
+
+evaldata$MSTATUS = ifelse(evaldata$MSTATUS=="Yes", 1, 0) 
+
+
+evaldata$INCOME<-sqrt(evaldata$INCOME)
+
+
+evaldata$HOMEOWNER<-ifelse(evaldata$HOME_VAL == 0, 0, 1)
+
+is.na(evaldata$HOME_VAL) <- !evaldata$HOME_VAL
+
+evaldata$HOME_VAL <- evaldata$HOME_VAL^(1/6)
+
+
+evaldata$MSTATUS = ifelse(evaldata$MSTATUS=="Yes", 1, 0)
+
+evaldata$PARENT1 = ifelse(evaldata$PARENT1=="Yes", 1, 0)
+
+
+evaldata$SEX  = ifelse(evaldata$SEX=="z_F", 1, 0)
+
+
+evaldata$EDUCATION_HSCHOOL_NODEGREE  = ifelse(evaldata$EDUCATION=="<High School", 1, 0)
+
+evaldata$EDUCATION_HSCHOOL_DEGREE = ifelse(evaldata$EDUCATION=="z_High School", 1, 0)
+
+evaldata$EDUCATION_BACHELORS  = ifelse(evaldata$EDUCATION=="Bachelors", 1, 0)
+
+evaldata$EDUCATION_MASTERS = ifelse(evaldata$EDUCATION=="Masters", 1, 0)
+
+evaldata$EDUCATION_PHD  = ifelse(evaldata$EDUCATION=="PhD", 1, 0)
+
+
+evaldata$JOB_BLUECOLLAR  = ifelse(evaldata$JOB=="z_Blue Collar", 1, 0)
+
+evaldata$JOB_CLERICAL = ifelse(evaldata$JOB=="Clerical", 1, 0)
+
+evaldata$JOB_PROFESSIONAL  = ifelse(evaldata$JOB=="Professional", 1, 0)
+
+evaldata$JOB_MANAGER = ifelse(evaldata$JOB=="Manager", 1, 0)
+
+evaldata$JOB_LAWYER  = ifelse(evaldata$JOB=="Lawyer", 1, 0)
+
+evaldata$JOB_HOME_MAKER = ifelse(evaldata$JOB=="Home Maker", 1, 0)
+
+evaldata$JOB_STUDENT  = ifelse(evaldata$JOB=="Student", 1, 0)
+
+evaldata$JOB_DOCTOR  = ifelse(evaldata$JOB=="Doctor", 1, 0)
+
+
+evaldata$TRAVTIME<-sqrt(evaldata$TRAVTIME)
+
+evaldata$CAR_USE_PRIV  = ifelse(evaldata$CAR_USE=="Private", 1, 0)
+
+evaldata$CAR_USE_COMM = ifelse(evaldata$CAR_USE=="Commercial", 1, 0)
+
+
+evaldata$CAR_USE = ifelse(evaldata$CAR_USE=="Private", 1, 0)
+
+
+evaldata$BLUEBOOK<-sqrt(evaldata$BLUEBOOK)
+
+
+evaldata$TIF_five  = ifelse(evaldata$TIF> 5, 1, 0)
+
+#t.test(formula = evaldata$TARGET_FLAG ~ evaldata$TIF_five)
+
+
+
+evaldata$CAR_TYPE_MINIVAN  = ifelse(evaldata$CAR_TYPE=="Minivan", 1, 0)
+
+evaldata$CAR_TYPE_TRUCK  = ifelse(evaldata$CAR_TYPE=="Panel Truck", 1, 0)
+
+evaldata$CAR_TYPE_PICKUP = ifelse(evaldata$CAR_TYPE=="Pickup", 1, 0)
+
+evaldata$CAR_TYPE_SPORTS  = ifelse(evaldata$CAR_TYPE=="Sports Car", 1, 0)
+
+evaldata$CAR_TYPE_VAN = ifelse(evaldata$CAR_TYPE=="Van", 1, 0)
+
+evaldata$CAR_TYPE_SUV  = ifelse(evaldata$CAR_TYPE=="z_SUV", 1, 0)
+
+
+evaldata$RED_CAR_YES  = ifelse(evaldata$RED_CAR=="yes", 1, 0)
+
+evaldata$RED_CAR_NO = ifelse(evaldata$RED_CAR=="no", 1, 0)
+
+
+evaldata$RED_CAR = ifelse(evaldata$RED_CAR=="yes", 1, 0)
+
+
+evaldata$OLDCLAIM <-ifelse(evaldata$OLDCLAIM ==  0,0,1)
+
+
+evaldata$CLM_FREQ<-ifelse(evaldata$CLM_FREQ == 0, 0, 1)
+
+
+evaldata$REVOKED_YES  = ifelse(evaldata$REVOKED=="Yes", 1, 0)
+
+evaldata$REVOKED_NO = ifelse(evaldata$REVOKED=="No", 1, 0)
+
+evaldata$REVOKED  = ifelse(evaldata$REVOKED=="Yes", 1, 0)
+
+
+evaldata$CAR_AGE[evaldata$CAR_AGE<0] <- 1
+
+evaldata$NEWCAR <-ifelse(evaldata$CAR_AGE ==  1,1,0)
+
+evaldata$CAR_AGE[evaldata$CAR_AGE == 1 & is.numeric(evaldata$CAR_AGE)] <- NA
+
+
+evaldata$URBANICITY_URBAN  = ifelse(evaldata$URBANICITY=="Highly Urban/ Urban", 1, 0)
+
+evaldata$URBANICITY_RURAL = ifelse(evaldata$URBANICITY=="z_Highly Rural/ Rural", 1, 0)
+
+###################
+
+
+# 1 for urban, 0 for rural
+
+evaldata$URBANICITY  = ifelse(evaldata$URBANICITY=="Highly Urban/ Urban", 1, 0)
+
+
+#Truncating the original columns
+
+#evaldata$URBANICITY <- NULL
+
+#evaldata$MSTATUS <- NULL
+
+#evaldata$SEX <- NULL
+
+#evaldata$REVOKED <- NULL
+
+#evaldata$CAR_USE <- NULL
+
+evaldata$CAR_TYPE <- NULL
+
+evaldata$EDUCATION <- NULL
+
+evaldata$JOB <- NULL
+
+evaldata$PARENT1 <- NULL
+
+#evaldata$RED_CAR <- NULL
+
+
+eval_logit_demo <- evaldata%>% dplyr::select(TARGET_FLAG,AGE, SEX, MSTATUS,EDUCATION_HSCHOOL_NODEGREE,EDUCATION_HSCHOOL_DEGREE,EDUCATION_BACHELORS,EDUCATION_MASTERS,EDUCATION_PHD)%>%na.omit()
+
+
+eval_logit_work <- evaldata%>% dplyr::select(TARGET_FLAG, YOJ, INCOME, TRAVTIME, BLUEBOOK, RED_CAR, OLDCLAIM, CLM_FREQ, REVOKED, MVR_PTS, CAR_AGE, URBANICITY, JOB_BLUECOLLAR, JOB_PROFESSIONAL, JOB_MANAGER, JOB_LAWYER, JOB_HOME_MAKER, JOB_STUDENT, JOB_DOCTOR)%>%na.omit()
+
+
+evaldata_ALL<-evaldata%>%dplyr::select(-TARGET_AMT, -TARGET_FLAG)%>%na.omit()
+
+
+
+#Logit model predicted probabilities
+
+evaldata_ALL$targetprob<-predict(bestModel, newdata=evaldata_ALL, type='response')
+
+evaldata_ALL$TARGET_FLAG <- ifelse(evaldata_ALL$targetprob > 0.5,1,0)
+
+
+
+#Logit model predicted probabilities
+
+evaldata.a$targetprob<-predict(bestModel, newdata=evaldata.a, type='response')
+
+evaldata.a$target <- ifelse(evaldata.a$targetprob > 0.5,1,0)
+
+
+head(evaldata_ALL[which(evaldata_ALL$TARGET_FLAG == 1),]) #Overview of the data
+
+
+head(evaldata_ALL[which(evaldata_ALL$TARGET_FLAG == 0),]) #Overview of the data
+
+
+summary(evaldata_ALL$targetprob) #summary of the predicted column
+
+
+#score the test data and plot
+
+plot(data.frame('Predicted'=predict(bestModel, evaldata.a,interval='confidence'), 'Observed'=evaldata.a$target))
+
+#append scored data
+
+evaldata.scored <- cbind(evaldata.a,'target_new'=predict(bestModel,evaldata.a,interval='confidence'))
+
+
+predict(bestModel, evaldata.a[13,])
+
+
+predplot(bestModel,main="Predicted versus Observed values")
+
+
+g1 <- ggplot(data = trainingdata, aes(x = target) )+
+
+  geom_density(alpha = .2, fill = "003333")+
+
+  ggtitle("Training Target Density")  # maybe density isn't a good picture ? 
+
+g2 <- ggplot(data = evaldata.a, aes(x = target) )+
+
+  geom_density(alpha = .2, fill = "#CC6666")+
+
+  ggtitle("Predicted Value Density")
+
+
+grid.arrange(g1,g2, ncol=2, top ="Crimes Distributions Actual vs Predicted")
+
+
+```
+
+
+
+

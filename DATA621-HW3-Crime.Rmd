@@ -1,0 +1,1109 @@
+
+---
+
+title: "DATA 621 - Homework 3 - Crime"
+
+author: "Cheryl Bowersox, Christopher Martin, Robert Sellers, Edwige Talla Badjio"
+
+date: "July 3, 2016"
+
+output:
+
+  html_document:
+
+    fig_caption: yes
+
+   force_captions: yes
+
+    highlight: pygments
+
+    number_sections: yes
+
+    theme: united
+
+    toc: yes
+
+  pdf_document:
+
+    fig_caption: yes
+
+    highlight: pygments
+
+    latex_engine: xelatex
+
+    number_sections: yes
+
+    toc: yes
+
+csl: mee.csl
+
+title2: Crime
+
+---
+
+
+
+```{r message=FALSE, echo=FALSE}
+
+#install packages
+
+#this will not be shown
+
+suppressWarnings(library(ggplot2))
+
+suppressWarnings(library(lubridate))
+
+suppressWarnings(library(dplyr))
+
+suppressWarnings(library(tidyr))
+
+suppressWarnings(library(RCurl))
+
+suppressWarnings(library(rjson))
+
+suppressWarnings(library(gridExtra))
+
+suppressWarnings(library(lattice))
+
+suppressWarnings(library(knitr))
+
+suppressWarnings(library(moments))
+
+suppressWarnings(library(caret))
+
+suppressWarnings(library(boot))#library for glm model diagnostics
+
+suppressWarnings(library(faraway))#library for VIF
+
+suppressWarnings(library(pROC))#library for ROC
+
+suppressWarnings(library(pracma))#library for AUC/ROC
+
+suppressWarnings(library(pander))#library for html tables
+
+suppressWarnings(library(pls))#library for prediction plot (predplot)
+
+
+#load data 
+
+trainingdata <- read.csv("https://raw.githubusercontent.com/cherylb/IS621Group4/master/crime-training-data.csv", header=TRUE)
+
+originaldata<-trainingdata
+
+evaluationData <-read.csv("https://raw.githubusercontent.com/cherylb/IS621Group4/master/crime-evaluation-data.csv", header=TRUE)
+
+
+#preserve data
+
+originaltraindata<-trainingdata
+
+originalevaldata <- evaluationData
+
+
+percent <- function(x, digits = 2, format = "f", ...) {
+
+  paste0(formatC(100 * x, format = format, digits = digits, ...), "%")
+
+}
+
+
+the.classif.err.rate <- function(df, predicted, actual="target"){
+
+   #obtaining the confusion matrix
+
+      conf.mat <- the.conf.matrix(df, predicted)
+
+   # Assigning TP, FN, FP and TN using the confusion matrix
+
+      TN <- conf.mat[1,1]
+
+      FN <- conf.mat[1,2]
+
+      FP <- conf.mat[2,1]
+
+      TP <- conf.mat[2,2]
+
+   #computing the classification error rate
+
+      myclasserrate <- (FP + FN) / (TP + FP + TN + FN)
+
+      return(as.numeric(myclasserrate))
+
+}
+
+
+the.conf.matrix <- function(df, predicted, actual="target"){
+
+   conf.mat <- table(df[,predicted], df[,actual])
+
+#   conf.mat <- as.matrix(table(df[,predicted], df[,actual]))
+
+   return(conf.mat)
+
+}
+
+```
+
+
+
+#OBJECTIVE
+
+
+To build a binary logistic regression model to predict whether the neighborhood will be at risk for high crime levels. 
+
+
+***
+
+
+#DATA EXPLORATION
+
+
+##Summary statistics
+
+
+
+```{r echo= FALSE, message=FALSE}
+
+nro <-nrow(trainingdata)
+
+nco <- ncol(trainingdata)
+
+meanData <- mean(trainingdata$target)
+
+sdData <- sd(trainingdata$target)
+
+```
+
+
+
+The data has `r nrow(trainingdata)` rows, with each record representing a set of information on crime for various neighborhoods of a major city.
+
+
+The response variable is a binary determinant 'target' value with a 1 representing an above average crime rate and a 0 representing below average crime rate. The crime target has an approximate mean of `r round(meanData,1)` and standard deviation of `r round(sdData,1)`. It follows a normal, uniform distribution and because it is a binary response there are no outliers. The data does not contain any missing values (see below below).
+
+
+```{r echo= FALSE, message=FALSE}
+
+sapply(trainingdata,function(x) sum(is.na(x)))
+
+```
+
+
+
+##Correlations in the data
+
+
+```{r echo=FALSE}
+
+round(cor(trainingdata),2)
+
+```
+
+
+##Variance Inflation Factors
+
+
+```{r echo=FALSE}
+
+vif(trainingdata)
+
+```
+
+
+Using Pearson's Correlation Coefficient, several variables were found to have a high correlation, making a regression analysis simply redundant. Columns that can be removed due to high correlations:
+
+
+- tax or rad (tax was selected as has a higher variance inflation factor of 9.24) 
+
+- lstat (correlated with more variables than rm)
+
+- nox 
+
+- age
+
+- dis
+
+
+Columns with low correlations:
+
+
+- chas (which can be removed, as it's a binary number with very few 1 values)
+
+- rm (except with medv and lstat, which are marked for removal below)
+
+- ptratio
+
+- black
+
+
+
+```{r echo=FALSE}
+
+#Columns that may require more investigation
+
+#- medv (correlated with rm)
+
+trainingdata$tax <- NULL
+
+trainingdata$lstat <- NULL
+
+trainingdata$nox <- NULL
+
+trainingdata$age <- NULL
+
+trainingdata$dis <- NULL
+
+```
+
+
+
+
+##Data Visualization 
+
+The target variable is evenly distributed between those that are above the median crime rate (1) and those that are below (0). This makes sense because the median is by definition the middle crime rate value, so we would expect to see half above and half below the median value. 
+
+The access to radial highways and the proportion of industrial businesses both appear to be possibly bimodal and the proportion of large lots (zn) is strongly negatively skewed.  The large variability and non-normality indicates further exploration needed and log transformation or categorical bucketing may be appropriate. 
+
+The difference in proportion of blacks per town (compared to standard of 63%) is also strongly skewed to left with a maximum value of 500, a mean of 357 and a long tail.  
+
+
+
+
+```{r echo=FALSE}
+
+old.par <- par(mfrow=c(1, 2))
+
+plot(trainingdata$target, main="Distribution of Crime",ylab="Above/Below Average Crime Rate")
+
+hist(trainingdata$target,main="Distribution of Crime",xlab="Above/Below Average Crime Histogram")
+
+par(old.par)
+
+
+#Cheryl Plots
+
+#Density Plots - looking at distribution of interesting variables
+
+
+g1 <- ggplot(data = trainingdata, aes(x = target) )+ 
+
+  geom_density(alpha = .2, fill = "003333")+
+
+  ggtitle("Above/Below Avg Crime Levels")
+
+
+
+g2 <- ggplot(data = trainingdata, aes(x = rad) )+ 
+
+  geom_density(alpha = .2, fill = "#CC6666")+
+
+  ggtitle("Access to radial highways")
+
+
+
+g3 <- ggplot(data = trainingdata, aes(x =zn) )+ 
+
+  geom_density(alpha = .2, fill = "#66CC00")+
+
+  ggtitle("Prop. Land zoned large lots")
+
+
+g4 <- ggplot(data = trainingdata, aes(x = indus) )+ 
+
+  geom_density(alpha = .2, fill = "#9933CC")+
+
+  ggtitle("Prop. Of non-retail business")
+
+
+grid.arrange(g1,g2,g3,g4, ncol=2, top ="Density Plots")
+
+
+#Box Plots
+
+
+
+g1<- ggplot(data = trainingdata, aes(x=1, y = rad)) + geom_boxplot(fill = "white", colour = "#3399CC",
+
+                                                outlier.colour = "red", outlier.shape = 1)+
+
+  ggtitle("Access to radial highways")
+
+
+
+g2<- ggplot(data = trainingdata, aes(x=1, y = zn)) + geom_boxplot(fill = "white", colour = "#CC6666",
+
+                                                         outlier.colour = "blue", outlier.shape = 1)+
+
+  ggtitle("Prop. Land zoned large lots")
+
+
+
+g3<- ggplot(data = trainingdata, aes(x=1, y = indus)) + geom_boxplot(fill = "white", colour = "#66CC00",
+
+                                                            outlier.colour = "red", outlier.shape = 1)+
+
+  ggtitle("Prop. Of non-retail busines")
+
+
+
+g4<- ggplot(data = trainingdata, aes(x=1, y = medv)) + geom_boxplot(fill = "white", colour = "#9933CC",
+
+                                                           outlier.colour = "red", outlier.shape = 1)+
+
+  ggtitle("Median Value")
+
+grid.arrange(g1,g2,g3,g4, ncol=2, top ="Boxplots")
+
+
+```
+
+
+The explanatory/predictor variables are the remaining variables that may have a positive or negative impact on the number of crimes. 
+
+
+
+
+
+
+
+***
+
+
+#DATA PREPARATION 
+
+
+
+##Columns added
+
+
+- znbi
+
+- znadj
+
+- ptratiocat
+
+- blackbi
+
+- medvcat
+
+
+##Columns removed
+
+
+- tax 
+
+- lstat
+
+- nox 
+
+- age
+
+- dis
+
+
+##Unusual Observations
+
+
+```{r echo=FALSE}
+
+all<-lm(target~.,trainingdata)
+
+hatv<-hatvalues(all)
+
+predictors<-row.names(trainingdata)
+
+old.par <- par(mfrow=c(1, 2))
+
+halfnorm(hatv,labs=predictors,ylab="Leverages")
+
+#http://stats.stackexchange.com/questions/101274/how-to-interpret-a-qq-plot
+
+qqnorm(rstandard(all))
+
+abline(0,1)
+
+par(old.par)
+
+```
+
+
+The leverage analysis shows some potentially disruptive elements in the data that would warrant further analysis. The QQ plot of the data suggests a bimodal distribution. These methods could be applied as support for model selection as a feedback loop towards refining a preferred model.
+
+
+##Diagnostic plots
+
+
+- zn - strong positive skew
+
+- Indus - OK
+
+- chas - OK (binomial)
+
+- rm - OK
+
+- ptratio - negative skew
+
+- black - negative skew
+
+- medv - OK / slight positive skew
+
+- rad - positive skew
+
+
+
+```{r echo=FALSE}
+
+old.par<-par(mar = rep(2, 4))
+
+par(mfrow=c(2,2))
+
+title<- "zn"
+
+histZn<-hist(trainingdata$zn,main=title,xlab=title, breaks=20)
+
+title<-"Indus"
+
+histIndus<-hist(trainingdata$indus,main=title,xlab=title, breaks=20)
+
+title<-"Chas"
+
+histChas<-hist(trainingdata$chas,main=title,xlab=title, breaks=20)
+
+title<-"Rm"
+
+histRm<-hist(trainingdata$rm,main=title,xlab=title, breaks=20)
+
+par(mfrow=c(2,2))
+
+title<-"Rad"
+
+histRad<-hist(trainingdata$rad,main=title,xlab=title, breaks=20)
+
+title<-"Ptratio"
+
+histPtratio<-hist(trainingdata$ptratio,main=title,xlab=title, breaks=20)
+
+title<-"Black"
+
+histBlack<-hist(trainingdata$black,main=title,xlab=title, breaks=20)
+
+title<-"Medv"
+
+histMedv<-hist(trainingdata$medv,main=title,xlab=title, breaks=20)
+
+par(old.par)
+
+```
+
+
+
+
+##Mathematical transformations
+
+
+Data was transformed to either normalize or create categorical variables
+
+
+```{r echo=FALSE,message=FALSE}
+
+#log <- function(x) ifelse(x <= 0, 0, base::log(x)) #http://stackoverflow.com/questions/19544942/how-to-get-rid-of-error-with-multiple-regression-in-r
+
+
+
+#trainingdata$zn <- log(trainingdata$zn)
+
+
+#trainingdata$ptratio <- sqrt(trainingdata$ptratio)
+
+```
+
+
+
+```{r}
+
+
+#Buckets as new variable
+
+trainingdata$medvcat <- ifelse(trainingdata$medv > 30, 1, 0) #Creating a variable by 
+
+#categorizing median value(medv) into two categories: high and low. 
+
+
+#Buckets for strong positive skew
+
+trainingdata$znbi <- ifelse(trainingdata$zn > 0, 1, 0)
+
+
+#Buckets as new variable
+
+trainingdata$blackbi<-ifelse(trainingdata$black> 300, 1, 0)  
+
+
+#Buckets as new variable
+
+trainingdata$znadj <- ifelse(trainingdata$zn <= 0, 0, base::log(trainingdata$zn))
+
+
+#Buckets as new variable
+
+trainingdata$ptratiocat<-ifelse(trainingdata$ptratio > 18.4, 1, 0)
+
+
+#Modified log transformation on negative skew
+
+trainingdata$ptratio<-log(1+max(trainingdata$ptratio)-trainingdata$ptratio)
+
+
+#Log transformation on positive skew
+
+trainingdata$rad <- log(trainingdata$rad)
+
+
+
+#Modified log transformation on negative skew
+
+trainingdata$black<-log(1+max(trainingdata$black)-trainingdata$black)
+
+
+#Log transformation on positive skew
+
+trainingdata$medv <- log(trainingdata$medv)
+
+```
+
+
+**ptratio** has a skewness of `r skewness(trainingdata$ptratio)` and a kurtosis of `r kurtosis(trainingdata$ptratio)`, and is therefore negatively skewed. **black** has a skewness of `r skewness(trainingdata$black)` and a kurtosis of `r kurtosis(trainingdata$black)`, and is therefore negatively skewed. The transformations applied to the data are used to normalize the variables in terms of skewness and kurtosis: **ptratio** is first transformed to its squared root, then the **ptratio** and **black** values are reduced by their maximum values before a log transformation. The values for **zn**, **rad**, and **med** are transformed into their log values.
+
+
+##Create buckets
+
+
+Given the massive skew in the column measuring the proportion of blacks per town (trainingdata$black), one suggestion is to create two buckets: (1) rows with <300 black, and (2) rows with >300 black
+
+
+```{r}
+
+trainingdata2 <- trainingdata[which(trainingdata$black < 300),]
+
+trainingdata3 <- trainingdata[which(trainingdata$black > 300),]
+
+```
+
+
+This does not fix the skew for the second bucket (>300 black) but it does help fix the skew for the lower end (<300 black):
+
+
+```{r}
+
+trainingdata2$black <- sqrt(trainingdata2$black)
+
+```
+
+
+
+***
+
+
+#BUILD MODELS
+
+
+##Logit Model
+
+
+The first created model includes all variables remaining in the data set, except those that are the categorical variables derived from the data. 
+
+
+```{r echo=FALSE}
+
+#excluding categorical vars created
+
+trainingdata.a <- trainingdata%>% 
+
+select(-znbi,-blackbi,-medvcat, -znadj,-ptratiocat)
+
+# if we are going to split the data like this we need to include an evaluation using the test data as well showing how well the model predicts it
+
+
+n <- dim(trainingdata)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- trainingdata.a[-test,]
+
+data.test <- trainingdata.a[test,]
+
+logitModel <- glm(target ~.,family=binomial(link='logit'),data=data.train)
+
+sumary(logitModel)
+
+
+predEvalModel1 <- predict(logitModel,newdata=data.test,type='response')
+
+Model1.pred <- ifelse(predEvalModel1 > 0.5,1,0)
+
+  
+
+cm1<-confusionMatrix(data=Model1.pred, reference=data.test$target)
+
+accuracy1<-cm1$overall["Accuracy"]
+
+recall1 <- cm1$byClass['Sensitivity']
+
+specificity1 <- cm1$byClass['Specificity']
+
+precision1 <- cm1$byClass['Pos Pred Value'] 
+
+f_measure1 <- 2 * ((precision1 * recall1) / (precision1 + recall1))
+
+```
+
+```{r echo=FALSE}
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag <- glm.diag(logitModel)
+
+glm.diag.plots(logitModel, logmod.diag)
+
+par(old.par)
+
+```
+
+
+Discussion of model: 
+
+
+Variables which significantly contribute to this model are zn, indus, rad, and black. The coefficient for zn is negative, indicating in this model that the land zoned for larger plots may lower the risk of higher crime rates. 
+
+The coefficient for indus is positive indicating the higher proportion of industrial businesses increase the risk of crime.  Rad, a measure of access to radial highways also has a positive impact on the risk. The variable black measures the proportion of blacks per town, has a positive coefficient as well. 
+
+The others included in the model such as chas, rm, ptratio and medv, while somewhat correlated with the a target variable, are not significant to this model when the other variables are included. 
+
+
+
+##Logit Model 2
+
+The second model is uses some categorical variables created in place of numerical. These categorical variables related to zn, blackbi, medvcat, ptratioca. These were included in place of some transformed variables as perhaps easier to interpret than more complex transformations. 
+
+
+```{r echo=FALSE}
+
+#trainingdata.b <- trainingdata%>% select(-zn,-transblack,-black,-medv, #-ptratio)
+
+trainingdata.b <- trainingdata%>% select(-zn,-black,-medv, -ptratio)
+
+#remove the new adjustments
+
+n <- dim(trainingdata.b)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- trainingdata.b[-test ,]
+
+data.test <- trainingdata.b[test,]
+
+
+#subset of the trainingdata <
+
+
+logitModel2 <- glm(target ~.,family=binomial(link='logit'),data=data.train)
+
+
+sumary(logitModel2)
+
+
+predEvalModel2 <- predict(logitModel2,newdata=data.test,type='response')
+
+Model2.pred <- ifelse(predEvalModel2 > 0.5,1,0)
+
+
+
+cm2<-confusionMatrix(data=Model2.pred, 
+
+  reference=data.test$target)
+
+accuracy2<-cm2$overall["Accuracy"]
+
+recall2 <- cm2$byClass['Sensitivity']
+
+specificity2 <- cm2$byClass['Specificity']
+
+precision2 <- cm2$byClass['Pos Pred Value'] 
+
+f_measure2 <- 2 * ((precision2 * recall2) / (precision2 + recall2))
+
+
+```
+
+```{r echo=FALSE}
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag <- glm.diag(logitModel2)
+
+glm.diag.plots(logitModel2, logmod.diag)
+
+par(old.par)
+
+```
+
+
+
+Discussion of model: 
+
+
+Variables which significantly contribute to this model are indus, rad, znbi, and medvcat. 
+
+The coefficient for indus is positive indicating the higher proportion of industrial businesses increase the risk of crime.  Rad, a measure of access to radial highways also has a positive impact on the risk. The variable znbi categorizes the data into those that are zoned for large lots and those that are not. A negative coefficient for this variable indicates a decrease in risk if there is any land zoned.  The categorical variable medvcat is equal to 1 if the the median value is greater than 30k, the positive coefficient somewhat counterintuitively implies those above that value have increased crime risk. 
+
+
+The others included in the model such as chas, rm, ptratio and medv, while somewhat correlated with the a target variable, are not significant to this model when the other variables are included. 
+
+
+
+
+
+##Logit Model 3
+
+Model 3 was built using information from the first two models in order to create a model with limited number of variables that can easily be interpreted.  In the first two models the amount of industry and relation to highways are both important. The presence of large lots was also important as well as the median value of the property.  For easy interpretation these last two were kept as categorical variables.  
+
+
+```{r echo=FALSE}
+
+trainingdata.c <- trainingdata%>% select(indus, rad, znbi,medvcat, target)
+
+#remove the new adjustments
+
+n <- dim(trainingdata.c)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- trainingdata.c[-test ,]
+
+data.test <- trainingdata.c[test,]
+
+
+#subset of the trainingdata <
+
+
+logitModel3 <- glm(target ~.,family=binomial(link='logit'),data=data.train)
+
+
+sumary(logitModel3)
+
+
+predEvalModel3 <- predict(logitModel3,newdata=data.test,type='response')
+
+Model3.pred <- ifelse(predEvalModel3 > 0.5,1,0)
+
+  
+
+cm3<-confusionMatrix(data=Model3.pred, 
+
+  reference=data.test$target)
+
+accuracy3<-cm3$overall["Accuracy"]
+
+recall3 <- cm1$byClass['Sensitivity']
+
+specificity3 <- cm3$byClass['Specificity']
+
+precision3 <- cm3$byClass['Pos Pred Value'] 
+
+f_measure3 <- 2 * ((precision3 * recall3) / (precision3 + recall3))
+
+```
+
+
+```{r echo=FALSE}
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag <- glm.diag(logitModel3)
+
+glm.diag.plots(logitModel3, logmod.diag)
+
+par(old.par)
+
+
+```
+
+
+Discussion of model:
+
+
+All variables included in this model were significant. The coefficients from this model align with the other models in the positive and negative influence on the target variable. 
+
+As in the first two models, the coefficients for indus  and rad are positive indicating the higher proportion of industrial businesses increase the risk of crime. The variable znbi categorizes the data into those that are zoned for large lots and those that are not. A negative coefficient for this variable indicates a decrease in risk if there is any land zoned.  The categorical variable medvcat is equal to 1 if the the median value is greater than 30k, the positive coefficient somewhat counterintuitively implies those above that value have increased crime risk. 
+
+
+
+
+***
+
+
+#SELECT MODELS 
+
+
+
+```{r echo=FALSE, message=FALSE}
+
+#Classification error calculation
+
+trainingdata$model1pred<-predict(logitModel,trainingdata,type='response')
+
+trainingdata$model2pred<-predict(logitModel2,trainingdata,type='response')
+
+trainingdata$model3pred<-predict(logitModel3,trainingdata,type='response')
+
+err1 <- the.classif.err.rate(trainingdata, "model1pred")
+
+err2 <- the.classif.err.rate(trainingdata,"model2pred")
+
+err3 <- the.classif.err.rate(trainingdata, "model3pred")
+
+
+#ROC / AUC calculation
+
+rocModel1 <- roc(target~model1pred, trainingdata)
+
+rocModel2 <- roc(target~model2pred, trainingdata)
+
+rocModel3 <- roc(target~model3pred, trainingdata)
+
+aucModel1 <- auc(rocModel1)
+
+aucModel2 <- auc(rocModel2)
+
+aucModel3 <- auc(rocModel3)
+
+
+selectStatistics <- matrix(c(accuracy1,precision1,recall1,specificity1,f_measure1,err1,aucModel1,accuracy2,precision2,recall2,specificity2,f_measure2,err2,aucModel2,accuracy3,precision3,recall3,specificity3,f_measure3,err3,aucModel3), ncol=3)
+
+colnames(selectStatistics) <- c('Model 1', 'Model 2', 'Model 3')
+
+rownames(selectStatistics) <- c('Accuracy', 'Precision','Sensitivity','Specificity','F1 Score','CER','AUC')
+
+
+```{r echo=FALSE, message=FALSE}
+
+pander(selectStatistics)
+
+```
+
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+rocModel1 <- roc(factor(target) ~ model1pred, data=trainingdata)
+
+rocModel2 <- roc(factor(target) ~ model2pred, data=trainingdata)
+
+rocModel3 <- roc(factor(target) ~ model3pred, data=trainingdata)
+
+```
+
+```{r echo=FALSE}
+
+par(mfrow=c(2,2))
+
+plot(rocModel1,main="Logit Model 1")
+
+plot(rocModel2,main="Logit Model 2")
+
+plot(rocModel3,main="Logit Model 3")
+
+par(mfrow=c(1,1))
+
+```
+
+
+Using each of the statistical metrics, we find a near equivalence between the first and second models. We will proceed with the first of these models.
+
+
+```{r }
+
+bestModel=logitModel
+
+```
+
+
+
+
+#EVALUATION DATA
+
+Run evaluation data through the selected model. Make predictions. Make sure we include appropriate transformations / calculations. 
+
+
+
+##Data transformations
+
+
+Evaluation data was treated to the same variable transformations as the original training data set.
+
+
+```{r echo=FALSE}
+
+evaldata <- evaluationData
+
+evaldata$tax <- NULL
+
+evaldata$lstat <- NULL
+
+evaldata$nox <- NULL
+
+evaldata$age <- NULL
+
+evaldata$dis <- NULL
+
+
+evaldata$medvcat <- ifelse(evaldata$medv > 30, 1, 0)
+
+
+
+
+evaldata$znbi <- ifelse(evaldata$zn > 0, 1, 0)
+
+evaldata$znadj <- ifelse(evaldata$zn <= 0, 0, base::log(evaldata$zn))
+
+
+evaldata$rad <- log(evaldata$rad)
+
+
+
+evaldata$ptratiocat<-ifelse(evaldata$ptratio > 18.4, 1, 0)
+
+evaldata$ptratio<-log(1+max(evaldata$ptratio)-evaldata$ptratio)
+
+
+
+
+##missing fix for black -- strong negative skew
+
+
+evaldata$blackbi<-ifelse(evaldata$black> 300, 1, 0) 
+
+evaldata$black<-log(1+max(evaldata$black)-evaldata$black)
+
+evaldata$medv <- log(evaldata$medv)
+
+evaldata2 <- evaldata[which(evaldata$black < 300),]
+
+evaldata3 <- evaldata[which(evaldata$black > 300),]
+
+evaldata2$black <- sqrt(evaldata2$black)
+
+```
+
+
+
+
+##Prediction
+
+```{r echo=FALSE}
+
+evaldata.a <- evaldata%>% 
+
+select(-znbi,-blackbi,-medvcat, -ptratiocat)
+
+#select(-znbi,-transblack,-znadj,-blackbi,-medvcat, -ptratiocat)
+
+
+#Logit model predicted probabilities
+
+evaldata.a$targetprob<-predict(bestModel, newdata=evaldata.a, type='response')
+
+evaldata.a$target <- ifelse(evaldata.a$targetprob > 0.5,1,0)
+
+```
+
+Sample of model data that resulted in a probability greater than 50% is shown below with the model probabilities as targetprob and the resulting target value.
+
+```{r}
+
+head(evaldata.a[which(evaldata.a$target == 1),]) #Overview of the data
+
+```
+
+
+Sample of model data that resulted in a probability less than 50% is shown below with the model probabilities as targetprob and the resulting target value.
+
+```{r}
+
+head(evaldata.a[which(evaldata.a$target == 0),]) #Overview of the data
+
+```
+
+Summary of the target probablities and the resulting target value
+
+```{r}
+
+summary(evaldata.a$targetprob) #summary of the predicted column
+
+```
+
+
+
+Applying our chosen model to the evaluation data we found the mean of the predicted values was `r mean(evaldata.a$target)` with a standard deviation of `r sd(evaldata.a$target)`. This can be compared to the mean and standard deviation of the training data set used to create the model of `r meanData` and `r sdData`. Below we show the results of our model and a test on a single row of data.
+
+
+```{r echo=FALSE}
+
+#score the test data and plot
+
+plot(data.frame('Predicted'=predict(bestModel, evaldata.a,interval='confidence'), 'Observed'=evaldata.a$target))
+
+#append scored data
+
+evaldata.scored <- cbind(evaldata.a,'target_new'=predict(bestModel,evaldata.a,interval='confidence'))
+
+```
+
+
+Testing the data on a single row yields a positive or negative result. A negative translates into a 1 (above average crime) or a 0 (below average crime) 
+
+```{r}
+
+predict(bestModel, evaldata.a[13,])
+
+```
+
+
+
+```{r echo=FALSE}
+
+predplot(bestModel,main="Predicted versus Observed values")
+
+```
+
+
+The above plot gives us some insight into the efficacy of our chosen model. There exists a small, but noticeable overlap across 0, our threshold between above average and below average crime rates.
+
+
+
+The density of the two 'target' values also h
+
+ighlight this change - the training data values are fairly evenly split between 0 and 1, whereas the predicted values have a higher amount of '0' values. This may be an artifact of the evaluation data, or may indicate the model is optimistic.
+
+
+```{r, echo=FALSE}
+g1 <- ggplot(data = trainingdata, aes(x = target) )+
+  geom_density(alpha = .2, fill = "003333")+
+  ggtitle("Training Target Density")  # maybe density isn't a good picture ? 
+g2 <- ggplot(data = evaldata.a, aes(x = target) )+
+  geom_density(alpha = .2, fill = "#CC6666")+
+  ggtitle("Predicted Value Density")
+
+grid.arrange(g1,g2, ncol=2, top ="Crimes Distributions Actual vs Predicted")
+
+```
+
+
+
+
