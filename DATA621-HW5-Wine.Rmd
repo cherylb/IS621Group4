@@ -1,0 +1,2536 @@
+
+ ---
+
+title: "DATA 621 - Homework 5 - Wine"
+
+author: "Cheryl Bowersox, Christopher Martin, Robert Sellers, Edwige Talla Badjio"
+
+date: "July 17, 2016"
+
+output:
+
+  html_document:
+
+    fig_caption: yes
+
+   force_captions: yes
+
+    highlight: pygments
+
+    number_sections: yes
+
+    theme: united
+
+    toc: yes
+
+  pdf_document:
+
+    fig_caption: yes
+
+    highlight: pygments
+
+    latex_engine: xelatex
+
+    number_sections: yes
+
+    toc: yes
+
+csl: mee.csl
+
+title2: Wine Data
+
+---
+
+
+
+```{r message=FALSE, echo=FALSE}
+
+#install packages
+
+#this will not be shown
+
+suppressWarnings(library(ggplot2))
+
+suppressWarnings(library(lubridate))
+
+suppressWarnings(library(dplyr))
+
+suppressWarnings(library(tidyr))
+
+suppressWarnings(library(broom))
+
+suppressWarnings(library(MASS))
+
+suppressWarnings(library(RCurl))
+
+#suppressWarnings(library(rjson))
+
+suppressWarnings(library(gridExtra))
+
+suppressWarnings(library(lattice))
+
+suppressWarnings(library(knitr))
+
+suppressWarnings(library(moments))
+
+suppressWarnings(library(caret))
+
+suppressWarnings(library(boot))#glm model diagnostics
+
+suppressWarnings(library(faraway))#VIF 
+
+suppressWarnings(library(pROC))#ROC
+
+suppressWarnings(library(pscl))#zero-inflated poisson
+
+suppressWarnings(library(pracma))#AUC/ROC
+
+suppressWarnings(library(pander))#html tables
+
+suppressWarnings(library(pls))#prediction plot (predplot)
+
+suppressWarnings(library(mlogit))#multinomial regression
+
+suppressWarnings(library(e1071))
+
+suppressWarnings(library(psych))
+
+suppressWarnings(library(Hmisc))#describe function
+
+suppressWarnings(library(reshape2))#melt function
+
+suppressWarnings(library(MASS))#glm function for negative binomial regression
+
+
+#load data 
+
+trainingdata <- read.csv("https://raw.githubusercontent.com/RobertSellers/dataWarehouse/master/wine-training-data.csv", header=TRUE, na.strings=c("","NA"))
+
+
+evaluationData <-read.csv("https://raw.githubusercontent.com/RobertSellers/dataWarehouse/master/wine-evaluation-data.csv", header=TRUE, na.strings=c("","NA"))
+
+
+colnames(trainingdata)[1]<-"INDEX"
+
+trainingdata<-trainingdata[ , -which(names(trainingdata) %in% "INDEX")]
+
+evaluationData<-evaluationData[ , -which(names(evaluationData) %in% "IN")]
+
+
+#preserve data
+
+originaltraindata<-trainingdata
+
+originalevaldata <- evaluationData
+
+
+#percent conversion
+
+percent <- function(x, digits = 2, format = "f", ...) {
+
+  paste0(formatC(100 * x, format = format, digits = digits, ...), "%")
+
+}
+
+
+
+the.classif.err.rate <- function(df, predicted, actual="TARGET"){
+
+   #obtaining the confusion matrix
+
+      conf.mat <- the.conf.matrix(df, predicted)
+
+   # Assigning TP, FN, FP and TN using the confusion matrix
+
+      TN <- conf.mat[1,1]
+
+      FN <- conf.mat[1,2]
+
+      FP <- conf.mat[2,1]
+
+      TP <- conf.mat[2,2]
+
+   #computing the classification error rate
+
+      myclasserrate <- (FP + FN) / (TP + FP + TN + FN)
+
+      return(as.numeric(myclasserrate))
+
+}
+
+
+
+
+the.conf.matrix <- function(df, predicted, actual="TARGET"){
+
+   conf.mat <- table(df[,predicted], df[,actual])
+
+#   conf.mat <- as.matrix(table(df[,predicted], df[,actual]))
+
+   return(conf.mat)
+
+}
+
+```
+
+
+***
+
+
+#OBJECTIVE
+
+
+To build a count regression model to predict the number of cases of wine that will be sold given certain properties of the wine and rating information. 
+
+
+
+
+***
+
+
+#DATA EXPLORATION
+
+
+
+##Summary Statistics
+
+
+```{r echo= FALSE, message=FALSE}
+
+nro <-nrow(trainingdata)
+
+nco <- ncol(trainingdata)
+
+meanResponse<- mean(trainingdata$TARGET)
+
+sdResponse<- sd(trainingdata$TARGET)
+
+str(trainingdata)
+
+```
+
+
+
+The data has `r nro` rows, with each record representing a set of properties of a commercially available wines. There are `r nco-1` predictor variables which include physical characteristics, chemical properties, and a critical ranking.
+
+
+##Response Variable
+
+
+```{r echo=FALSE}
+
+# summary(trainingdata$TARGET)#check for missing values
+
+hist(trainingdata$TARGET,main="Number of Cases Purchased",col="lightgreen",xlab='Response Variable TARGET',breaks=20,xlim=c(0,10))
+
+box(lty = 'solid', col = 'black')
+
+grid(NA, 5,col="black")
+
+```
+
+
+The response variable is `TARGET`, representing the number of cases sold, ranging between 0 and 8. The response has a mean of `r round(meanResponse,2)` and a standard deviation of `r round(sdResponse,2)`. Our response variable is not missing any values. The above histogram shows a large proportion of 0 values. This is resulting in a bimodal distribution with one single normal distribution on the right and a half-normal distribution on the left.
+
+
+##Exploratory Visualization
+
+
+```{r echo= FALSE, message=FALSE}
+
+g1 <- ggplot(data = trainingdata, aes(x = pH) )+ 
+
+  geom_density(alpha = .2, fill = "003333")+
+
+  ggtitle("Wine pPH")
+
+
+
+g2 <- ggplot(data = trainingdata, aes(x = FixedAcidity) )+ 
+
+  geom_density(alpha = .2, fill = "#CC6666")+
+
+  ggtitle("Fixed Acidity")
+
+
+
+g3 <- ggplot(data = trainingdata, aes(x =VolatileAcidity) )+ 
+
+  geom_density(alpha = .2, fill = "#66CC00")+
+
+  ggtitle("Volatile Acidity")
+
+
+g4 <- ggplot(data = trainingdata, aes(x = CitricAcid) )+ 
+
+  geom_density(alpha = .2, fill = "#9933CC")+
+
+  ggtitle("Citric Acid")
+
+
+grid.arrange(g2,g3,g4,g1, ncol=2, top ="Density Plots for Wine Acidity")
+
+
+par(mfrow=c(1,5), oma = c(1,1,0,0) + 0.1,  mar = c(3,3,1,1) + 0.1)
+
+#ResidualSugar
+
+boxplot(trainingdata$ResidualSugar, col="lightgreen", pch=19)
+
+mtext("Residual Sugar", cex=0.8, side=1, line=2)
+
+
+#Chloride
+
+boxplot(trainingdata$Chlorides, col="lightgreen", pch=19)
+
+mtext("Chlorides", cex=0.8, side=1, line=2)
+
+
+#FreeSulfurDioxide
+
+boxplot(trainingdata$FreeSulfurDioxide,col="lightgreen", pch=19)
+
+mtext("Free Sulfur Dioxide", cex=0.8, side=1, line=2)
+
+
+#TotalSulfurDioxide
+
+boxplot(trainingdata$TotalSulfurDioxide,breaks=20, col="lightgreen")
+
+mtext("Total Sulfur Dioxide", cex=0.8, side=1, line=2)
+
+
+#Density
+
+boxplot(trainingdata$Density,breaks=20, col="lightgreen")
+
+mtext("Density", cex=0.8, side=1, line=2)
+
+
+
+par(mfrow=c(1,5), oma = c(1,1,0,0) + 0.1,  mar = c(3,3,1,1) + 0.1)
+
+
+#Sulphates
+
+boxplot(trainingdata$Sulphates,breaks=20, col="lightgreen")
+
+mtext("Sulphates", cex=0.8, side=1, line=2)
+
+
+#Alcohol
+
+boxplot(trainingdata$Alcohol,breaks=20, col="lightgreen")
+
+mtext("Alcohol", cex=0.8, side=1, line=2)
+
+
+#LabelAppeal
+
+boxplot(trainingdata$LabelAppeal,breaks=20, col="lightgreen")
+
+mtext("Label Appeal", cex=0.8, side=1, line=2)
+
+
+#AcidIndex
+
+boxplot(trainingdata$AcidIndex,breaks=20, col="lightgreen")
+
+mtext("Acid Index", cex=0.8, side=1, line=2)
+
+
+#STARS
+
+boxplot(trainingdata$STARS,breaks=20,col="lightgreen")
+
+mtext("STARS", cex=0.8, side=1, line=2)
+
+```
+
+
+We can observe from the box plots that the attributes 'LabelAppeal' and 'STARS' have no outliers. All the other attributes have outliers.
+
+
+##Missing Values
+
+
+```{r echo= FALSE, message=FALSE}
+
+sapply(trainingdata,function(x) sum(is.na(x)))
+
+```
+
+
+The above table shows a substantial number of missing/NA values with some of the predictors. These will be considered in our Data Transformation section. The fields ResidualSugar, Chlorides, FreeSulfurDiaoxide, TotalSulfurDioxide, PH, Sulphates, Alcohol, and Stars all appear to have missing values.  
+
+
+
+
+
+***
+
+
+#DATA PREPARATION 
+
+
+##Variables Unchanged
+
+
+- *VolatileAcidity*, *CitricAcid*,*FixedAcidity*
+
+
+These variables have a normal distribution with no missing values.
+
+
+
+##Variables Transformed
+
+
+Most predictor variables are not normally distributed, being tightly clustered and symmetric around the mean but with long tails. Simple transformations such as log, roots and reciprocals were not helpful in normalizing the data. More complex transformations may help to normalize the predictor variables but would complicate interpretation of the model. 
+
+
+- *ResidualSugar*, *Chlorides*, *FreeSulfurDioxide*, *TotalSulfurDioxide*, *Alcohol*, *Density*,*LabelAppeal*
+
+
+Because zero is a valid measure for these fields and zero is present in the data we will assume a null value in these fields represents a bad or missing measurement.
+
+
+
+- *pH*
+
+
+PH contains no zero values in the data, the null values are not assumed to be zero and are removed from the model.  
+
+
+- *Sulphates*
+
+
+Sulphates contains no zero values in the data. A null value in this case is assumed to represent zero or unmeasured sulphates. The null values are replaced with zero, and a new binary variable, 'HasSulfates', which is set to 1 to indicate the wine contains sulfates, and 0 if it is a sulfate-free wine. 
+
+
+- *AcidIndex*
+
+
+Right-tailed. No missing values. AcidIndex contains discrete points between 4 and 17. The data is negatively skewed, with a mean of `r mean(trainingdata$AcidIndex)` and standard deviation `r sd(trainingdata$AcidIndex)`.  A log transformation helps remove the skew.
+
+
+- *Stars*
+
+
+The variable 'Stars' contains many null values. This variable indicates a rate given to the wine. We can assume a null value here is either the result of a bad rating or a rating not given.  We can replace the null values with zero, but also include a  binary l variable 'HasRating' that is equal to 0 if the star rating is 0 or null, and equal to 1 if the wine has a rating. 
+
+
+
+##Diagnostic Plots for Variable Transformation
+
+
+```{r echo= FALSE}
+
+par(mfrow=c(2,2))
+
+
+#Sulphates
+
+hist(trainingdata$Sulphates,breaks=20,main="Sulphates", col="lightgreen")
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+
+#STARS
+
+hist(trainingdata$STARS,breaks=20,main="STARS", col="lightgreen")
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+
+#AcidIndex
+
+hist(trainingdata$AcidIndex,breaks=20,main="AcidIndex - Before Transformation", col="lightgreen")
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+trainingdata$AcidIndex <- log(trainingdata$AcidIndex)
+
+hist(trainingdata$AcidIndex,main="AcidIndex - Log Transformation", col="red")
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+```
+
+
+```{r echo= FALSE, message=FALSE}
+
+#Handle nulls as described above
+
+#Sulphates - add binary, convert nulls to 0 in original field
+
+trainingdata$HasSulphates <-ifelse(is.na(trainingdata$Sulphates), 0,1)
+
+trainingdata$Sulphates <-ifelse(is.na(trainingdata$Sulphates), 0,trainingdata$Sulphates)
+
+
+#Stars - add binary, convert nulls to 0 in original field
+
+trainingdata$HasRating <-ifelse(is.na(trainingdata$STARS), 0,1)
+
+trainingdata$STARS <-ifelse(is.na(trainingdata$STARS), mean(trainingdata$STARS,na.rm=TRUE),trainingdata$STARS)
+
+
+#mydata<-trainingdata[complete.cases(trainingdata),]
+
+#complete.cases
+
+#nrow(mydata)  
+
+#We lose about 25% of the data to nulls, we still have a over 9K records to run the model on, but anyone think maybe we can interpolate some missing values using the mean? Or any other ideas?
+
+#trainingdata <- trainingdata[complete.cases(trainingdata),]
+
+numNAs <- apply(trainingdata, 1, function(z) sum(is.na(z)))
+
+trainingdata<-trainingdata[!(numNAs > 1),]
+
+for(i in 1:ncol(trainingdata)){
+
+  trainingdata[is.na(trainingdata[,i]), i] <- mean(trainingdata[,i], na.rm = TRUE)
+
+}
+
+```
+
+
+Based upon the distribution of records containing a missing value, it was calculated (and graphed below) that the vast majority of records, `r round(nrow(trainingdata)/nrow(trainingdata),2)`, have only a single missing value. Rather than remove every record with a missing value, it was decided to remove wine records with 2 or more missing values, while replacing the remaining records with a single missing value with the mean. Ultimately, the values for these missing values could be estimated based on making these columns response variables themselves.
+
+
+```{r echo= FALSE, message=FALSE}
+
+hist(numNAs,main="Number of NAs Per Row", xlab="Number of NAs",col="green")
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+sdForText<-round(sd(trainingdata$TARGET),2)
+
+```
+
+
+After adjusting 'Sulphates' and 'Stars' and removal of the `r nro - nrow(trainingdata)` remaining rows with null values we have `r nrow(trainingdata)` complete cases to include in our model. The removal of rows resulted in very minor changes to the distribution of the 'Target' variable. The updated mean and standard deviation of the remaining 'Target' are `round(mean(trainingdata$TARGET),2)` and `r sdForText`.
+
+
+
+## New Variables
+
+
+.*BoundSulfurDioxide*
+
+
+
+An additional new variable, BoundSulfurDioxide, was created as the difference between Total and Free Sulfur Dioxide. This combination more closely follows a normal distribution and may be helpful with validating model assumptions. 
+
+
+.*HighDensity*
+
+
+
+Density follows a non-normal distribution, with about 50% less than 1. A new binary variable 'HighDensity' was created, set to 0 when density is less than .99, and 1 where density is greater than 1.  A t-test indicates there may be a difference in the Target mean between the two groups and it may be useful addition to the model.
+
+
+.*LabelAppeal*
+
+
+
+LabelAppeal contains 5 discrete values. (-2,-1,0,1,2). This variable was converted to four corresponding categories: LabelAppealn2, LabelAppealn1, LabelAppeal1,LabelAppeal2. The case where the Label Appeal is 0 is the case where all the 4 categories equal zero. A t-test of indicates there is a difference in Target mean between the categories. 
+
+
+```{r echo= FALSE, message=FALSE}
+
+#BoundSulfurDioxide
+
+
+# This is linear combo of Total - Free Sulfur Dioxide, this one generally follows a normal distribution untransformed, maybe we can disregard other two and use this?
+
+trainingdata$BoundSulfurDioxide <- trainingdata$TotalSulfurDioxide - trainingdata$FreeSulfurDioxide
+
+par(mfrow=c(2,2))
+
+hist(trainingdata$BoundSulfurDioxide,main="BoundSulfurDioxide")
+
+qqnorm(trainingdata$BoundSulfurDioxide);qqline(trainingdata$BoundSulfurDioxide, col = 2)
+
+
+###################
+
+#FixedAcidity
+
+par(mfrow=c(2,2))
+
+hist(trainingdata$FixedAcidity,main="Fixed Acidity - Before Transform")
+
+qqnorm(trainingdata$FixedAcidity);qqline(trainingdata$FixedAcidity, col = 2)
+
+#VolatileAcidity
+
+hist(trainingdata$VolatileAcidity,main="VolatileAcidity - Before Transform")
+
+qqnorm(trainingdata$VolatileAcidity);qqline(trainingdata$VolatileAcidity, col = 2)
+
+#pH
+
+hist(trainingdata$pH,main="pH")
+
+qqnorm(trainingdata$pH);qqline(trainingdata$pH, col = 2)
+
+#Sulphates
+
+hist(trainingdata$Sulphates,main="Sulphates")
+
+qqnorm(trainingdata$Sulphates);qqline(trainingdata$Sulphates, col = 2)
+
+#Alcohol
+
+hist(trainingdata$Alcohol,main="Alcohol")
+
+qqnorm(trainingdata$Alcohol);qqline(trainingdata$Alcohol, col = 2)
+
+
+###################
+
+#Density
+
+par(mfrow=c(2,1))
+
+hist(trainingdata$Density,main="Density - Before Transform")
+
+trainingdata$HighDensity <- ifelse(trainingdata$Density < .99, 0,1)
+
+mosaicplot(trainingdata$HighDensity~trainingdata$TARGET,main = "High Density",xlab = "", ylab="TARGET", cex = 0.75, color = TRUE)
+
+
+###################
+
+
+###################
+
+#LabelAppeal
+
+par(mfrow=c(2,1))
+
+hist(trainingdata$LabelAppeal,main="Label Appeal - Before Transform")
+
+trainingdata$LabelAppealn1 <- ifelse(trainingdata$LabelAppeal == -2, 1,0)
+
+trainingdata$LabelAppealn2 <- ifelse(trainingdata$LabelAppeal == -1, 1,0)
+
+trainingdata$LabelAppeal1 <- ifelse(trainingdata$LabelAppeal == 1, 1,0)
+
+trainingdata$LabelAppeal2 <- ifelse(trainingdata$LabelAppeal == 2, 1,0)
+
+mosaicplot(trainingdata$LabelAppeal~trainingdata$TARGET,main = "Label Appeal as Category",xlab = "", ylab="TARGET", cex = 0.75, color = TRUE)
+
+###################
+
+```
+
+
+##Correlations in the Variables
+
+
+```{r echo= FALSE, message=FALSE}
+
+# have to look at this after we handle the nulls etc. 
+
+#round(cor(trainingdata),2)
+
+cor_mat <- as.matrix(cor(trainingdata))
+
+cor_mat_melt <- arrange(melt(cor_mat), -abs(value))
+
+cor_mat_melt%>%filter(value > .25, value != 1)
+
+```
+
+Target has a correlation above .25 for HasRating (derived from 'STARS'), STARS, and LabelAppeal.  Other variables that show a high correlation are related to or derived from each other, such has the variables density and HighDensity. 
+
+
+##Unusual Observations
+
+
+```{r echo=FALSE}
+
+all<-lm(TARGET~.,trainingdata)
+
+hatv<-hatvalues(all)
+
+predictors<-row.names(trainingdata)
+
+old.par <- par(mfrow=c(1, 2))
+
+halfnorm(hatv,labs=predictors,ylab="Leverages")
+
+qqnorm(rstandard(all))
+
+abline(0,1)
+
+par(old.par)
+
+#http://stats.stackexchange.com/questions/101274/how-to-interpret-a-qq-plot
+
+```
+
+
+The leverage analysis shows 2 potentially disruptive elements in the data (rows 2729 and 8447) that would warrant further analysis. The QQ plot of the data shows a right skewed distribution.
+
+
+
+
+***
+
+
+#BUILD MODELS
+
+
+##Poisson Regression Models
+
+
+###Poisson Model 1 using all variables
+
+```{r echo=FALSE, message=FALSE,results='hide'}
+
+r1=glm(TARGET~.,family=poisson,data=trainingdata)
+
+r1Summary<-summary(r1)
+
+```
+
+
+The initial results suggest an overdispersion (The residual deviance exceeding the mean). Residual deviance: 13313  on 12376  degrees of freedom.   This suggests an error in the model's standard error (a variance greater than the mean). There are also a substantial number of high p-values (over 0.05). To improve our error, the model is run again using quasipoisson.
+
+
+```{r echo=FALSE, message=FALSE}
+
+r2=glm(TARGET~.,family=quasipoisson,data=trainingdata)
+
+r2Summary<-summary(r2)
+
+quasipoissonModel=glm(TARGET~.-LabelAppeal-Density-ResidualSugar-FixedAcidity-CitricAcid-HasSulphates-BoundSulfurDioxide,family=quasipoisson,data=trainingdata)
+
+
+#metrics calc
+
+trainingdata.quasi <- trainingdata%>% dplyr::select(-LabelAppeal-Density-ResidualSugar-FixedAcidity-CitricAcid-HasSulphates-BoundSulfurDioxide)
+
+#remove the new adjustments
+
+n <- dim(trainingdata.quasi)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+train.quasi <- trainingdata.quasi[-test ,]
+
+test.quasi <- trainingdata.quasi[test,]
+
+
+#subset of the trainingdata
+
+quasipoissonModel2 <- glm(TARGET~.-LabelAppeal-Density-ResidualSugar-FixedAcidity-CitricAcid-HasSulphates-BoundSulfurDioxide,family=quasipoisson,data=train.quasi)
+
+
+predQuasi <- predict(quasipoissonModel2,newdata=test.quasi,type='response')
+
+quasi1 <- ifelse(predQuasi  > 0.5,1,0)
+
+cm1<-confusionMatrix(data=quasi1 , reference=test.quasi$TARGET)
+
+
+accuracy1<-cm1$overall["Accuracy"]
+
+recall1 <- cm1$byClass['Sensitivity']
+
+specificity1 <- cm1$byClass['Specificity']
+
+precision1 <- cm1$byClass['Pos Pred Value'] 
+
+f_measure1 <- 2 * ((precision1 * recall1) / (precision1 + recall1))
+
+
+```
+
+
+Using deductive elimination, we remove the results with a p-value exceeding 0.05 until the remaining values are entirely significant. 
+
+
+Results from the model with diagnostic plots:
+
+
+```{r echo=FALSE}
+
+#POISSON MODEL 1
+
+sumary(quasipoissonModel)
+
+model1coefficients<-summary(quasipoissonModel  )$coefficients
+
+```
+
+```{r echo=FALSE}
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag <- glm.diag(quasipoissonModel)
+
+glm.diag.plots(quasipoissonModel, logmod.diag)
+
+par(old.par)
+
+```
+
+
+Discussion of coefficients: 
+
+Each of the predictors is significant as had been made apparent during the deductive selection process.
+
+
+##Poisson Regression Model 2
+
+A second Poisson model was created using only the variables that were highly significant in the linear models or showed a high correlation with the Target.
+
+```{r echo=FALSE}
+
+#needed to make Target an integer to get this to work
+
+trainingdata_ps <- trainingdata
+
+trainingdata_ps$TARGET_INT <- as.integer(trainingdata_ps$TARGET) #integer
+
+psmodel2 <- glm(TARGET_INT ~ LabelAppeal + STARS + AcidIndex + HasRating + VolatileAcidity , family="poisson", data=trainingdata_ps)
+
+sumary(psmodel2)
+
+(anova(psmodel2, test="Chisq"))
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag2 <- glm.diag(psmodel2)
+
+glm.diag.plots(psmodel2, logmod.diag2)
+
+par(old.par)
+
+model2coefficients<-summary(psmodel2  )$coefficients
+
+```
+
+Discussion of coefficients: 
+
+The coefficients in the output represent the expected log count for a one-unit increase in each variable. The variables the positively impact the count are LabelAppeal, STARS, HasRating. The AcidIndex and VolatileAcidity both have a negative impact on the count. All the variables selected for this model were significant predictors. 
+
+
+
+##Multiple Linear Regression Models
+
+
+###FULL MODEL
+
+
+A multiple linear regression model was run using all variables in our training set, excluding BoundSulfurDioxide and the categorical variables for Label Appeal to avoid colinearity.
+
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+#Multiple linear regression using all variables
+
+trainingdata_FULL1<-trainingdata%>% dplyr::select(-TARGET)
+
+trainingdata_M1 <- trainingdata%>% dplyr::select(-BoundSulfurDioxide,-LabelAppealn1,-LabelAppealn2, -LabelAppeal1, -LabelAppeal2)
+
+all<-lm(TARGET~.,na.omit(trainingdata))
+
+null=lm(TARGET~1, na.omit(trainingdata))
+
+full_results<- lm(TARGET~.,data=trainingdata_M1)
+
+model3coefficients<-summary(full_results )$coefficients
+
+```
+
+
+Results from the model with diagnostic plots
+
+
+```{r echo=FALSE}
+
+#FULL MODEL
+
+sumary(full_results)
+
+par(mfrow=c(2,2))
+
+plot(full_results)
+
+```
+
+The model shows a definite bias in the residuals vs. fitted plot, with smaller fitted values tending to have positive errors and larger fitted values having negative errors. This indicates there may be a need to transform our variables, or that a different type of model is needed. 
+
+
+Discussion of the coefficients:
+
+
+As assumed, the full model includes several variables that have a high p-value and should not be considered as meaningful predictors, and not statistically significant.
+
+
+Of those that are significant, VolatileAcidity, Chlorides, Sulfur Dioxide, Sulphates And AcidIndex have a negative coefficient, indicating the higher amounts can lower the cases sold. The label appeal, the star rating, and alcohol have positive coefficients, indicating a higher label appeal, rating and alcohol increase sales. 
+
+
+
+###FORWARD STEPWISE METHOD
+
+
+A stepwise approach was performed using a forward AIC (Akaike information criterion) method. 
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+#Multiple linear regression using stepwise methodology
+
+trainingdata_STEP1<-trainingdata%>% dplyr::select(-TARGET)
+
+
+all<-lm(TARGET~.,na.omit(trainingdata))
+
+
+null=lm(TARGET~1, na.omit(trainingdata))
+
+stepResults_STEP1<-step(null,scope=list(lower=null,upper=all),direction="forward")
+
+model4coefficients<-summary(stepResults_STEP1 )$coefficients
+
+```
+
+
+Current optimal results from stepwise method with diagnostic plots
+
+
+```{r echo=FALSE}
+
+#stepResults
+
+sumary(stepResults_STEP1)
+
+par(mfrow=c(2,2))
+
+plot(stepResults_STEP1)
+
+```
+
+
+Discussion of coefficients: 
+
+
+
+Our model results show a very high increase in variance in the Q-Q plot, which suggests a right-skew in our model. Each of the individual predictors are shown to be statistically significant.
+
+
+Of the final variables from the model, there are positive coefficients for ratings, stars, and label appeal indicating they increase sales, while negative coefficients for acidity, chlorides, and volatile acidity suggest that high levels can reduce sales.
+
+
+##NEGATIVE BINOMIAL MODELS
+
+
+###MODEL BASED ON FORWARD STEPWISE RESULTS
+
+The first negative binary logit model was selected based on various indicative variables selected from the multiple linear regression forward stepwise method. 
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+#list of columns to select from the trainingdata set based on the column names of selected variables from the forward stepwise model
+
+stepResultscoeff <- rownames(as.matrix(stepResults_STEP1$coefficients))
+
+stepResults_colnum <- sort(c(match(stepResultscoeff, colnames(trainingdata)),1), decreasing=FALSE)
+
+
+negbinom_STEP1 <- trainingdata[,stepResults_colnum]
+
+#negbinom_STEP1 <- trainingdata%>% dplyr::na.omit()
+
+n <- dim(negbinom_STEP1 )[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- negbinom_STEP1 [-test ,]
+
+data.test <- negbinom_STEP1 [test,]
+
+#http://www.ats.ucla.edu/stat/r/dae/nbreg.htm
+
+negbinom_STEP1Model <- glm.nb(TARGET~.,data=data.train)
+
+
+predEvalSTEP1negbinom <- predict(negbinom_STEP1Model , newdata=data.test, type='response')
+
+model5coefficients<-summary(negbinom_STEP1Model)$coefficients
+
+#DemoModel.pred <- ifelse(negbinom_STEP1Model  > 0.5,1,0)
+
+#cm1<-confusionMatrix(data=DemoModel.pred, reference=data.test$TARGET)
+
+#accuracy1<-cm1$overall["Accuracy"]
+
+#recall1 <- cm1$byClass['Sensitivity']
+
+#specificity1 <- cm1$byClass['Specificity']
+
+#precision1 <- cm1$byClass['Pos Pred Value'] 
+
+#f_measure1 <- 2 * ((precision1 * recall1) / (precision1 + recall1))
+
+```
+
+
+```{r echo=FALSE}
+
+#logmod.diag <- glm.diag(predEvalSTEP1negbinom)
+
+#glm.diag.plots(predEvalSTEP1negbinom , logmod.diag)
+
+#predEvalSTEP1negbinom
+
+
+#SKIPS THE PREDICTION STEP#
+
+plot(predEvalSTEP1negbinom)
+
+```
+
+
+Discussion of model:
+
+
+While using the same variables as the forward stepwise model, the negative binomial model does not fit the data as well. This indicates it is not a valid model.
+
+
+
+###MODEL BASED ON WINE INDICATIVES
+
+The second negative binary logit model was selected based on various indicative variables for wine, such as the Acidity, Residual Sugar, Alcohol, and pH levels. 
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+negbinom_wineindicative <- trainingdata%>% dplyr::select(TARGET, FixedAcidity, VolatileAcidity, CitricAcid, ResidualSugar, Chlorides, FreeSulfurDioxide, TotalSulfurDioxide, Density, pH, Sulphates, Alcohol, AcidIndex, HasSulphates, BoundSulfurDioxide, HighDensity)%>%na.omit()
+
+n <- dim(negbinom_wineindicative)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- negbinom_wineindicative[-test ,]
+
+data.test <- negbinom_wineindicative[test,]
+
+#http://www.ats.ucla.edu/stat/r/dae/nbreg.htm
+
+negbinomWineIndicativeModel <- glm.nb(TARGET~.,data=data.train)
+
+model6coefficients<-summary(negbinomWineIndicativeModel )$coefficients
+
+predEvalWineIndicative <- predict(negbinomWineIndicativeModel, newdata=data.test, type='response')
+
+##DemoModel.pred <- ifelse(negbinomWineIndicativeModel > 0.5,1,0)
+
+#cm1<-confusionMatrix(data=DemoModel.pred, reference=data.test$TARGET)
+
+#accuracy1<-cm1$overall["Accuracy"]
+
+#recall1 <- cm1$byClass['Sensitivity']
+
+#specificity1 <- cm1$byClass['Specificity']
+
+#precision1 <- cm1$byClass['Pos Pred Value'] 
+
+#f_measure1 <- 2 * ((precision1 * recall1) / (precision1 + recall1))
+
+```
+
+
+```{r echo=FALSE}
+
+#logmod.diag <- glm.diag(negbinomWineIndicativeModel )
+
+#glm.diag.plots(negbinomWineIndicativeModel , logmod.diag)
+
+
+#SKIPS THE PREDICTION STEP#
+old.par <- par(mfrow=c(1, 2))
+
+plot(negbinomWineIndicativeModel)
+
+par(old.par)
+
+```
+
+
+Discussion of model:
+
+
+The plots highlight a dramatic skew and indicates that the model does not appropriately fit the data.
+
+
+
+
+***
+
+
+#SELECT MODELS 
+
+
+```{r echo=FALSE, message=FALSE}
+
+
+#model1:quasipoissonModel
+
+#model2:psmodel2
+
+#model3:full_results
+
+#model4:stepResults_STEP1
+
+#model5:negbinom_STEP1Model
+
+#model6:negbinomWineIndicativeModel
+
+
+#Classification error calculation
+
+trainingdata$predQuasiPoisson<-predict(quasipoissonModel,trainingdata,type='response')
+
+trainingdata$predPoisson<-predict(psmodel2,trainingdata,type='response')
+
+trainingdata$predFull<-predict(full_results,trainingdata,type='response')
+
+trainingdata$predStep<-predict(stepResults_STEP1,trainingdata,type='response')
+
+#trainingdata$predNegbinom1<-predict(negbinom_STEP1Model,trainingdata,type='response')
+
+#trainingdata$predNegbinom2<-predict(negbinomWineIndicativeModel,trainingdata,type='response')
+
+
+#errCalc
+
+err1 <- the.classif.err.rate(trainingdata, "predQuasiPoisson")
+
+err2 <- the.classif.err.rate(trainingdata,"predPoisson")
+
+err3 <- the.classif.err.rate(trainingdata, "predFull")
+
+err4 <- the.classif.err.rate(trainingdata, "predStep")
+
+#err5 <- the.classif.err.rate(trainingdata,"predNegbinom1")
+
+#err6 <- the.classif.err.rate(trainingdata, "predNegbinom2")
+
+
+#ROC / AUC calculation
+
+rocModel1 <- roc(TARGET~predQuasiPoisson, trainingdata)
+
+rocModel2 <- roc(TARGET~predPoisson, trainingdata)
+
+rocModel3 <- roc(TARGET~predFull, trainingdata)
+
+rocModel4 <- roc(TARGET~predStep, trainingdata)
+
+#rocModel5 <- roc(TARGET~predNegbinom1, trainingdata)
+
+#rocModel6 <- roc(TARGET~predNegbinom2, trainingdata)
+
+aucModel1 <- auc(rocModel1)
+
+aucModel2 <- auc(rocModel2)
+
+aucModel3 <- auc(rocModel3)
+
+aucModel4 <- auc(rocModel4)
+
+#aucModel5 <- auc(rocModel5)
+
+#aucModel6 <- auc(rocModel6)
+
+
+selectStatistics <- matrix(c(err1,aucModel1,err2,aucModel2,err3,aucModel3,err4,aucModel4),ncol=2)
+
+
+rownames(selectStatistics) <- c('Model 1', 'Model 2', 'Model 3','Model 4')
+
+colnames(selectStatistics) <- c('CER','AUC')
+
+
+
+
+
+```
+
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+
+rocModel1 <- roc(factor(TARGET) ~ predQuasiPoisson, data=trainingdata)
+
+rocModel2 <- roc(factor(TARGET) ~ predPoisson, data=trainingdata)
+
+rocModel3 <- roc(factor(TARGET) ~ predFull, data=trainingdata)
+
+rocModel4 <- roc(factor(TARGET) ~ predStep, data=trainingdata)
+
+#rocModel5 <- roc(factor(TARGET) ~ predNegbinom1, data=trainingdata)
+
+#rocModel6 <- roc(factor(TARGET) ~ predNegbinom2, data=trainingdata)
+
+```
+
+
+
+```{r echo=FALSE}
+
+par(mfrow=c(2,2))
+
+hist(quasipoissonModel$coefficients,main="quasipoissonModel coef", col="red",breaks=20)
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+hist(psmodel2$coefficients,main="psmodel2 coef", col="red",breaks=20)
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+hist(negbinom_STEP1Model$coefficients,main="negbinom_STEP1Model coef", col="red",breaks=20)
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+hist(negbinomWineIndicativeModel$coefficients,main="negbinomWineIndicativeModel coef", col="red",breaks=20)
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+
+bestModel=quasipoissonModel
+
+```
+
+
+The Quasi poisson Model (model 1) was selected from the poisson and negative binomial model due to the following factors:
+
+
+.Lower mean p-values
+
+
+
+.Overdispersion corrected
+
+
+
+.In comparison against its other poisson counterpart (model 2), it has a lower classified error rate
+
+
+
+.While not the lowest AUC, it was not so significantly different to change the selection.
+
+
+
+```{r echo=FALSE}
+
+pander(selectStatistics)
+
+par(mfrow=c(2,2))
+
+plot(rocModel1,main="Quasi-Poisson Model")
+
+plot(rocModel2,main="Poisson Model")
+
+plot(rocModel3,main="Full Selection Model")
+
+plot(rocModel4,main="Forward Stepwise Model")
+
+#plot(rocModel5,main="Negative Binomial Model 1")
+
+#plot(rocModel6,main="Negative Binomial Model 2")
+
+par(mfrow=c(1,1))
+
+```
+
+
+***
+
+
+
+##EVALUATION DATA
+
+Run evaluation data through the selected model. Make predictions. Make sure we include appropriate transformations / calculations. 
+
+
+##Data transformations
+
+
+Evaluation data was treated to the same variable transformations as the original training data set.
+
+
+```{r echo= FALSE, message=FALSE}
+
+evaldata <- evaluationData
+
+
+evaldata$AcidIndex <- log(evaldata$AcidIndex)
+
+evaldata$HasSulphates <-ifelse(is.na(evaldata$Sulphates), 0,1)
+
+evaldata$Sulphates <-ifelse(is.na(evaldata$Sulphates), 0,evaldata$Sulphates)
+
+evaldata$HasRating <-ifelse(is.na(evaldata$STARS), 0,1)
+
+evaldata$STARS <-ifelse(is.na(evaldata$STARS), mean(evaldata$STARS,na.rm=TRUE),evaldata$STARS)
+
+
+numNAs <- apply(evaldata, 1, function(z) sum(is.na(z)))
+
+evaldata<-evaldata[!(numNAs > 1),]
+
+for(i in 1:ncol(evaldata)){
+
+  evaldata[is.na(evaldata[,i]), i] <- mean(evaldata[,i], na.rm = TRUE)
+
+}
+
+
+evaldata$BoundSulfurDioxide <- evaldata$TotalSulfurDioxide - evaldata$FreeSulfurDioxide
+
+evaldata$HighDensity <- ifelse(evaldata$Density < .99, 0,1)
+
+
+evaldata$LabelAppealn1 <- ifelse(evaldata$LabelAppeal == -2, 1,0)
+
+evaldata$LabelAppealn2 <- ifelse(evaldata$LabelAppeal == -1, 1,0)
+
+evaldata$LabelAppeal1 <- ifelse(evaldata$LabelAppeal == 1, 1,0)
+
+evaldata$LabelAppeal2 <- ifelse(evaldata$LabelAppeal == 2, 1,0)
+
+evaldata <- evaldata%>%select(-TARGET)
+
+#predictions using best model
+
+
+evaldata$PTARGET <- predict(bestModel, newdata=evaldata, type='response')
+
+
+```
+
+
+The quasipoisson model was used to predict cases sold using the evaluation data. A sample of those predicted values are shown below.
+
+
+```{r}
+
+head(evaldata) #Overview of the data
+
+
+```    
+
+
+Applying our chosen model to the evaluation data we found the mean of the predicted values was `r mean(evaldata$PTARGET)` with a standard deviation of `r sd(evaldata$PTARGET)`. This can be compared to the mean and standard deviation of the training data set used to create the model of `r meanResponse` and `r sdResponse`
+
+
+
+
+
+
+
+
+#APPENDIX
+
+
+```{r eval=FALSE}
+
+the.classif.err.rate <- function(df, predicted, actual="TARGET"){
+
+   #obtaining the confusion matrix
+
+      conf.mat <- the.conf.matrix(df, predicted)
+
+   # Assigning TP, FN, FP and TN using the confusion matrix
+
+      TN <- conf.mat[1,1]
+
+      FN <- conf.mat[1,2]
+
+      FP <- conf.mat[2,1]
+
+      TP <- conf.mat[2,2]
+
+   #computing the classification error rate
+
+      myclasserrate <- (FP + FN) / (TP + FP + TN + FN)
+
+      return(as.numeric(myclasserrate))
+
+}
+
+
+
+
+the.conf.matrix <- function(df, predicted, actual="TARGET"){
+
+   conf.mat <- table(df[,predicted], df[,actual])
+
+#   conf.mat <- as.matrix(table(df[,predicted], df[,actual]))
+
+   return(conf.mat)
+
+}
+
+
+
+nro <-nrow(trainingdata)
+
+nco <- ncol(trainingdata)
+
+meanResponse<- mean(trainingdata$TARGET)
+
+sdResponse<- sd(trainingdata$TARGET)
+
+str(trainingdata)
+
+
+
+
+The data has `r nro` rows, with each record representing a set of properties of a commercially available wines. There are `r nco-1` predictor variables which include physical characteristics, chemical properties, and a critical ranking.
+
+
+##Response Variable
+
+
+
+# summary(trainingdata$TARGET)#check for missing values
+
+hist(trainingdata$TARGET,main="Number of Cases Purchased",col="lightgreen",xlab='Response Variable TARGET',breaks=20,xlim=c(0,10))
+
+box(lty = 'solid', col = 'black')
+
+grid(NA, 5,col="black")
+
+
+
+The response variable is `TARGET`, representing the number of cases sold, ranging between 0 and 8. The response has a mean of `r round(meanResponse,2)` and a standard deviation of `r round(sdResponse,2)`. Our response variable is not missing any values. The above histogram shows a large proportion of 0 values. This is resulting in a bimodal distribution with one single normal distribution on the right and a half-normal distribution on the left.
+
+
+##Exploratory Visualization
+
+
+
+g1 <- ggplot(data = trainingdata, aes(x = pH) )+ 
+
+  geom_density(alpha = .2, fill = "003333")+
+
+  ggtitle("Wine pPH")
+
+
+
+g2 <- ggplot(data = trainingdata, aes(x = FixedAcidity) )+ 
+
+  geom_density(alpha = .2, fill = "#CC6666")+
+
+  ggtitle("Fixed Acidity")
+
+
+
+g3 <- ggplot(data = trainingdata, aes(x =VolatileAcidity) )+ 
+
+  geom_density(alpha = .2, fill = "#66CC00")+
+
+  ggtitle("Volatile Acidity")
+
+
+g4 <- ggplot(data = trainingdata, aes(x = CitricAcid) )+ 
+
+  geom_density(alpha = .2, fill = "#9933CC")+
+
+  ggtitle("Citric Acid")
+
+
+grid.arrange(g2,g3,g4,g1, ncol=2, top ="Density Plots for Wine Acidity")
+
+
+par(mfrow=c(1,5), oma = c(1,1,0,0) + 0.1,  mar = c(3,3,1,1) + 0.1)
+
+#ResidualSugar
+
+boxplot(trainingdata$ResidualSugar, col="lightgreen", pch=19)
+
+mtext("Residual Sugar", cex=0.8, side=1, line=2)
+
+
+#Chloride
+
+boxplot(trainingdata$Chlorides, col="lightgreen", pch=19)
+
+mtext("Chlorides", cex=0.8, side=1, line=2)
+
+
+#FreeSulfurDioxide
+
+boxplot(trainingdata$FreeSulfurDioxide,col="lightgreen", pch=19)
+
+mtext("Free Sulfur Dioxide", cex=0.8, side=1, line=2)
+
+
+#TotalSulfurDioxide
+
+boxplot(trainingdata$TotalSulfurDioxide,breaks=20, col="lightgreen")
+
+mtext("Total Sulfur Dioxide", cex=0.8, side=1, line=2)
+
+
+#Density
+
+boxplot(trainingdata$Density,breaks=20, col="lightgreen")
+
+mtext("Density", cex=0.8, side=1, line=2)
+
+
+
+par(mfrow=c(1,5), oma = c(1,1,0,0) + 0.1,  mar = c(3,3,1,1) + 0.1)
+
+
+#Sulphates
+
+boxplot(trainingdata$Sulphates,breaks=20, col="lightgreen")
+
+mtext("Sulphates", cex=0.8, side=1, line=2)
+
+
+#Alcohol
+
+boxplot(trainingdata$Alcohol,breaks=20, col="lightgreen")
+
+mtext("Alcohol", cex=0.8, side=1, line=2)
+
+
+#LabelAppeal
+
+boxplot(trainingdata$LabelAppeal,breaks=20, col="lightgreen")
+
+mtext("Label Appeal", cex=0.8, side=1, line=2)
+
+
+#AcidIndex
+
+boxplot(trainingdata$AcidIndex,breaks=20, col="lightgreen")
+
+mtext("Acid Index", cex=0.8, side=1, line=2)
+
+
+#STARS
+
+boxplot(trainingdata$STARS,breaks=20,col="lightgreen")
+
+mtext("STARS", cex=0.8, side=1, line=2)
+
+
+
+We can observe from the box plots that the attributes 'LabelAppeal' and 'STARS' have no outliers. All the other attributes have outliers.
+
+
+##Missing Values
+
+
+
+sapply(trainingdata,function(x) sum(is.na(x)))
+
+
+
+The above table shows a substantial number of missing/NA values with some of the predictors. These will be considered in our Data Transformation section. The fields ResidualSugar, Chlorides, FreeSulfurDiaoxide, TotalSulfurDioxide, PH, Sulphates, Alcohol, and Stars all appear to have missing values.  
+
+
+
+
+
+***
+
+
+#DATA PREPARATION 
+
+
+##Variables Unchanged
+
+
+- *VolatileAcidity*, *CitricAcid*,*FixedAcidity*
+
+
+These variables have a normal distribution with no missing values.
+
+
+
+##Variables Transformed
+
+
+Most predictor variables are not normally distributed, being tightly clustered and symmetric around the mean but with long tails. Simple transformations such as log, roots and reciprocals were not helpful in normalizing the data. More complex transformations may help to normalize the predictor variables but would complicate interpretation of the model. 
+
+
+- *ResidualSugar*, *Chlorides*, *FreeSulfurDioxide*, *TotalSulfurDioxide*, *Alcohol*, *Density*,*LabelAppeal*
+
+
+Because zero is a valid measure for these fields and zero is present in the data we will assume a null value in these fields represents a bad or missing measurement.
+
+
+
+- *pH*
+
+
+PH contains no zero values in the data, the null values are not assumed to be zero and are removed from the model.  
+
+
+- *Sulphates*
+
+
+Sulphates contains no zero values in the data. A null value in this case is assumed to represent zero or unmeasured sulphates. The null values are replaced with zero, and a new binary variable, 'HasSulfates', which is set to 1 to indicate the wine contains sulfates, and 0 if it is a sulfate-free wine. 
+
+
+- *AcidIndex*
+
+
+Right-tailed. No missing values. AcidIndex contains discrete points between 4 and 17. The data is negatively skewed, with a mean of `r mean(trainingdata$AcidIndex)` and standard deviation `r sd(trainingdata$AcidIndex)`.  A log transformation helps remove the skew.
+
+
+- *Stars*
+
+
+The variable 'Stars' contains many null values. This variable indicates a rate given to the wine. We can assume a null value here is either the result of a bad rating or a rating not given.  We can replace the null values with zero, but also include a  binary l variable 'HasRating' that is equal to 0 if the star rating is 0 or null, and equal to 1 if the wine has a rating. 
+
+
+
+##Diagnostic Plots for Variable Transformation
+
+
+
+par(mfrow=c(2,2))
+
+
+#Sulphates
+
+hist(trainingdata$Sulphates,breaks=20,main="Sulphates", col="lightgreen")
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+
+#STARS
+
+hist(trainingdata$STARS,breaks=20,main="STARS", col="lightgreen")
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+
+#AcidIndex
+
+hist(trainingdata$AcidIndex,breaks=20,main="AcidIndex - Before Transformation", col="lightgreen")
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+trainingdata$AcidIndex <- log(trainingdata$AcidIndex)
+
+hist(trainingdata$AcidIndex,main="AcidIndex - Log Transformation", col="red")
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+
+#Handle nulls as described above
+
+#Sulphates - add binary, convert nulls to 0 in original field
+
+trainingdata$HasSulphates <-ifelse(is.na(trainingdata$Sulphates), 0,1)
+
+trainingdata$Sulphates <-ifelse(is.na(trainingdata$Sulphates), 0,trainingdata$Sulphates)
+
+
+#Stars - add binary, convert nulls to 0 in original field
+
+trainingdata$HasRating <-ifelse(is.na(trainingdata$STARS), 0,1)
+
+trainingdata$STARS <-ifelse(is.na(trainingdata$STARS), mean(trainingdata$STARS,na.rm=TRUE),trainingdata$STARS)
+
+
+#mydata<-trainingdata[complete.cases(trainingdata),]
+
+#complete.cases
+
+#nrow(mydata)  
+
+#We lose about 25% of the data to nulls, we still have a over 9K records to run the model on, but anyone think maybe we can interpolate some missing values using the mean? Or any other ideas?
+
+#trainingdata <- trainingdata[complete.cases(trainingdata),]
+
+numNAs <- apply(trainingdata, 1, function(z) sum(is.na(z)))
+
+trainingdata<-trainingdata[!(numNAs > 1),]
+
+for(i in 1:ncol(trainingdata)){
+
+  trainingdata[is.na(trainingdata[,i]), i] <- mean(trainingdata[,i], na.rm = TRUE)
+
+}
+
+
+
+Based upon the distribution of records containing a missing value, it was calculated (and graphed below) that the vast majority of records, `r round(nrow(trainingdata)/nrow(trainingdata),2)`, have only a single missing value. Rather than remove every record with a missing value, it was decided to remove wine records with 2 or more missing values, while replacing the remaining records with a single missing value with the mean. Ultimately, the values for these missing values could be estimated based on making these columns response variables themselves.
+
+
+
+hist(numNAs,main="Number of NAs Per Row", xlab="Number of NAs",col="green")
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+sdForText<-round(sd(trainingdata$TARGET),2)
+
+
+
+After adjusting 'Sulphates' and 'Stars' and removal of the `r nro - nrow(trainingdata)` remaining rows with null values we have `r nrow(trainingdata)` complete cases to include in our model. The removal of rows resulted in very minor changes to the distribution of the 'Target' variable. The updated mean and standard deviation of the remaining 'Target' are `round(mean(trainingdata$TARGET),2)` and `r sdForText`.
+
+
+
+## New Variables
+
+
+*BoundSulfurDioxide*
+
+
+An additional new variable, BoundSulfurDioxide, was created as the difference between Total and Free Sulfur Dioxide. This combination more closely follows a normal distribution and may be helpful with validating model assumptions. 
+
+
+*HighDensity*
+
+
+Density follows a non-normal distribution, with about 50% less than 1. A new binary variable 'HighDensity' was created, set to 0 when density is less than .99, and 1 where density is greater than 1.  A t-test indicates there may be a difference in the Target mean between the two groups and it may be useful addition to the model.
+
+
+*LabelAppeal*
+
+
+LabelAppeal contains 5 discrete values. (-2,-1,0,1,2). This variable was converted to four corresponding categories: LabelAppealn2, LabelAppealn1, LabelAppeal1,LabelAppeal2. The case where the Label Appeal is 0 is the case where all the 4 categories equal zero. A t-test of indicates there is a difference in Target mean between the categories. 
+
+
+
+#BoundSulfurDioxide
+
+
+# This is linear combo of Total - Free Sulfur Dioxide, this one generally follows a normal distribution untransformed, maybe we can disregard other two and use this?
+
+trainingdata$BoundSulfurDioxide <- trainingdata$TotalSulfurDioxide - trainingdata$FreeSulfurDioxide
+
+par(mfrow=c(2,2))
+
+hist(trainingdata$BoundSulfurDioxide,main="BoundSulfurDioxide")
+
+qqnorm(trainingdata$BoundSulfurDioxide);qqline(trainingdata$BoundSulfurDioxide, col = 2)
+
+
+###################
+
+#FixedAcidity
+
+par(mfrow=c(2,2))
+
+hist(trainingdata$FixedAcidity,main="Fixed Acidity - Before Transform")
+
+qqnorm(trainingdata$FixedAcidity);qqline(trainingdata$FixedAcidity, col = 2)
+
+#VolatileAcidity
+
+hist(trainingdata$VolatileAcidity,main="VolatileAcidity - Before Transform")
+
+qqnorm(trainingdata$VolatileAcidity);qqline(trainingdata$VolatileAcidity, col = 2)
+
+#pH
+
+hist(trainingdata$pH,main="pH")
+
+qqnorm(trainingdata$pH);qqline(trainingdata$pH, col = 2)
+
+#Sulphates
+
+hist(trainingdata$Sulphates,main="Sulphates")
+
+qqnorm(trainingdata$Sulphates);qqline(trainingdata$Sulphates, col = 2)
+
+#Alcohol
+
+hist(trainingdata$Alcohol,main="Alcohol")
+
+qqnorm(trainingdata$Alcohol);qqline(trainingdata$Alcohol, col = 2)
+
+
+###################
+
+#Density
+
+par(mfrow=c(2,1))
+
+hist(trainingdata$Density,main="Density - Before Transform")
+
+trainingdata$HighDensity <- ifelse(trainingdata$Density < .99, 0,1)
+
+mosaicplot(trainingdata$HighDensity~trainingdata$TARGET,main = "High Density",xlab = "", ylab="TARGET", cex = 0.75, color = TRUE)
+
+
+###################
+
+
+###################
+
+#LabelAppeal
+
+par(mfrow=c(2,1))
+
+hist(trainingdata$LabelAppeal,main="Label Appeal - Before Transform")
+
+trainingdata$LabelAppealn1 <- ifelse(trainingdata$LabelAppeal == -2, 1,0)
+
+trainingdata$LabelAppealn2 <- ifelse(trainingdata$LabelAppeal == -1, 1,0)
+
+trainingdata$LabelAppeal1 <- ifelse(trainingdata$LabelAppeal == 1, 1,0)
+
+trainingdata$LabelAppeal2 <- ifelse(trainingdata$LabelAppeal == 2, 1,0)
+
+mosaicplot(trainingdata$LabelAppeal~trainingdata$TARGET,main = "Label Appeal as Category",xlab = "", ylab="TARGET", cex = 0.75, color = TRUE)
+
+###################
+
+
+
+##Correlations in the Variables
+
+
+
+# have to look at this after we handle the nulls etc. 
+
+#round(cor(trainingdata),2)
+
+cor_mat <- as.matrix(cor(trainingdata))
+
+cor_mat_melt <- arrange(melt(cor_mat), -abs(value))
+
+cor_mat_melt%>%filter(value > .25, value != 1)
+
+
+Target has a correlation above .25 for HasRating (derived from 'STARS'), STARS, and LabelAppeal.  Other variables that show a high correlation are related to or derived from each other, such has the variables density and HighDensity. 
+
+
+##Unusual Observations
+
+
+
+all<-lm(TARGET~.,trainingdata)
+
+hatv<-hatvalues(all)
+
+predictors<-row.names(trainingdata)
+
+old.par <- par(mfrow=c(1, 2))
+
+halfnorm(hatv,labs=predictors,ylab="Leverages")
+
+qqnorm(rstandard(all))
+
+abline(0,1)
+
+par(old.par)
+
+#http://stats.stackexchange.com/questions/101274/how-to-interpret-a-qq-plot
+
+
+
+The leverage analysis shows 2 potentially disruptive elements in the data (rows 2729 and 8447) that would warrant further analysis. The QQ plot of the data shows a right skewed distribution.
+
+
+
+
+***
+
+
+#BUILD MODELS
+
+
+##Poisson Regression Models
+
+
+###Poisson Model 1 using all variables
+
+
+r1=glm(TARGET~.,family=poisson,data=trainingdata)
+
+r1Summary<-summary(r1)
+
+
+
+The initial results suggest an overdispersion (The residual deviance exceeding the mean). Residual deviance: 13313  on 12376  degrees of freedom.   This suggests an error in the model's standard error (a variance greater than the mean). There are also a substantial number of high p-values (over 0.05). To improve our error, the model is run again using quasipoisson.
+
+
+
+r2=glm(TARGET~.,family=quasipoisson,data=trainingdata)
+
+r2Summary<-summary(r2)
+
+quasipoissonModel=glm(TARGET~.-LabelAppeal-Density-ResidualSugar-FixedAcidity-CitricAcid-HasSulphates-BoundSulfurDioxide,family=quasipoisson,data=trainingdata)
+
+
+#metrics calc
+
+trainingdata.quasi <- trainingdata%>% dplyr::select(-LabelAppeal-Density-ResidualSugar-FixedAcidity-CitricAcid-HasSulphates-BoundSulfurDioxide)
+
+#remove the new adjustments
+
+n <- dim(trainingdata.quasi)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+train.quasi <- trainingdata.quasi[-test ,]
+
+test.quasi <- trainingdata.quasi[test,]
+
+
+#subset of the trainingdata
+
+quasipoissonModel2 <- glm(TARGET~.-LabelAppeal-Density-ResidualSugar-FixedAcidity-CitricAcid-HasSulphates-BoundSulfurDioxide,family=quasipoisson,data=train.quasi)
+
+
+predQuasi <- predict(quasipoissonModel2,newdata=test.quasi,type='response')
+
+quasi1 <- ifelse(predQuasi  > 0.5,1,0)
+
+cm1<-confusionMatrix(data=quasi1 , reference=test.quasi$TARGET)
+
+
+accuracy1<-cm1$overall["Accuracy"]
+
+recall1 <- cm1$byClass['Sensitivity']
+
+specificity1 <- cm1$byClass['Specificity']
+
+precision1 <- cm1$byClass['Pos Pred Value'] 
+
+f_measure1 <- 2 * ((precision1 * recall1) / (precision1 + recall1))
+
+
+
+Using deductive elimination, we remove the results with a p-value exceeding 0.05 until the remaining values are entirely significant. 
+
+
+Results from the model with diagnostic plots:
+
+
+
+#POISSON MODEL 1
+
+sumary(quasipoissonModel)
+
+model1coefficients<-summary(quasipoissonModel  )$coefficients
+
+
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag <- glm.diag(quasipoissonModel)
+
+glm.diag.plots(quasipoissonModel, logmod.diag)
+
+par(old.par)
+
+
+
+Discussion of coefficients: 
+
+Each of the predictors is significant as had been made apparent during the deductive selection process.
+
+
+##Poisson Regression Model 2
+
+A second Poisson model was created using only the variables that were highly significant in the linear models or showed a high correlation with the Target.
+
+
+#needed to make Target an integer to get this to work
+
+trainingdata_ps <- trainingdata
+
+trainingdata_ps$TARGET_INT <- as.integer(trainingdata_ps$TARGET) #integer
+
+psmodel2 <- glm(TARGET_INT ~ LabelAppeal + STARS + AcidIndex + HasRating + VolatileAcidity , family="poisson", data=trainingdata_ps)
+
+sumary(psmodel2)
+
+(anova(psmodel2, test="Chisq"))
+
+old.par <- par(mfrow=c(1, 2))
+
+logmod.diag2 <- glm.diag(psmodel2)
+
+glm.diag.plots(psmodel2, logmod.diag2)
+
+par(old.par)
+
+model2coefficients<-summary(psmodel2  )$coefficients
+
+
+Discussion of coefficients: 
+
+The coefficients in the output represent the expected log count for a one-unit increase in each variable. The variables the positively impact the count are LabelAppeal, STARS, HasRating. The AcidIndex and VolatileAcidity both have a negative impact on the count. All the variables selected for this model were significant predictors. 
+
+
+
+##Multiple Linear Regression Models
+
+
+###FULL MODEL
+
+
+A multiple linear regression model was run using all variables in our training set, excluding BoundSulfurDioxide and the categorical variables for Label Appeal to avoid colinearity.
+
+
+
+
+#Multiple linear regression using all variables
+
+trainingdata_FULL1<-trainingdata%>% dplyr::select(-TARGET)
+
+trainingdata_M1 <- trainingdata%>% dplyr::select(-BoundSulfurDioxide,-LabelAppealn1,-LabelAppealn2, -LabelAppeal1, -LabelAppeal2)
+
+all<-lm(TARGET~.,na.omit(trainingdata))
+
+null=lm(TARGET~1, na.omit(trainingdata))
+
+full_results<- lm(TARGET~.,data=trainingdata_M1)
+
+model3coefficients<-summary(full_results )$coefficients
+
+
+
+Results from the model with diagnostic plots
+
+
+
+#FULL MODEL
+
+sumary(full_results)
+
+par(mfrow=c(2,2))
+
+plot(full_results)
+
+
+The model shows a definite bias in the residuals vs. fitted plot, with smaller fitted values tending to have positive errors and larger fitted values having negative errors. This indicates there may be a need to transform our variables, or that a different type of model is needed. 
+
+
+Discussion of the coefficients:
+
+
+As assumed, the full model includes several variables that have a high p-value and should not be considered as meaningful predictors, and not statistically significant.
+
+
+Of those that are significant, VolatileAcidity, Chlorides, Sulfur Dioxide, Sulphates And AcidIndex have a negative coefficient, indicating the higher amounts can lower the cases sold. The label appeal, the star rating, and alcohol have positive coefficients, indicating a higher label appeal, rating and alcohol increase sales. 
+
+
+
+###FORWARD STEPWISE METHOD
+
+
+A stepwise approach was performed using a forward AIC (Akaike information criterion) method. 
+
+
+
+#Multiple linear regression using stepwise methodology
+
+trainingdata_STEP1<-trainingdata%>% dplyr::select(-TARGET)
+
+
+all<-lm(TARGET~.,na.omit(trainingdata))
+
+
+null=lm(TARGET~1, na.omit(trainingdata))
+
+stepResults_STEP1<-step(null,scope=list(lower=null,upper=all),direction="forward")
+
+model4coefficients<-summary(stepResults_STEP1 )$coefficients
+
+
+
+Current optimal results from stepwise method with diagnostic plots
+
+
+#stepResults
+
+sumary(stepResults_STEP1)
+
+par(mfrow=c(2,2))
+
+plot(stepResults_STEP1)
+
+
+
+Discussion of coefficients: 
+
+
+
+Our model results show a very high increase in variance in the Q-Q plot, which suggests a right-skew in our model. Each of the individual predictors are shown to be statistically significant.
+
+
+Of the final variables from the model, there are positive coefficients for ratings, stars, and label appeal indicating they increase sales, while negative coefficients for acidity, chlorides, and volatile acidity suggest that high levels can reduce sales.
+
+
+##NEGATIVE BINOMIAL MODELS
+
+
+###MODEL BASED ON FORWARD STEPWISE RESULTS
+
+The first negative binary logit model was selected based on various indicative variables selected from the multiple linear regression forward stepwise method. 
+
+
+#```{r echo=FALSE, message=FALSE, results='hide'}
+
+#list of columns to select from the trainingdata set based on the column names of selected variables from the forward stepwise model
+
+stepResultscoeff <- rownames(as.matrix(stepResults_STEP1$coefficients))
+
+stepResults_colnum <- sort(c(match(stepResultscoeff, colnames(trainingdata)),1), decreasing=FALSE)
+
+
+negbinom_STEP1 <- trainingdata[,stepResults_colnum]
+
+#negbinom_STEP1 <- trainingdata%>% dplyr::na.omit()
+
+n <- dim(negbinom_STEP1 )[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- negbinom_STEP1 [-test ,]
+
+data.test <- negbinom_STEP1 [test,]
+
+#http://www.ats.ucla.edu/stat/r/dae/nbreg.htm
+
+negbinom_STEP1Model <- glm.nb(TARGET~.,data=data.train)
+
+
+predEvalSTEP1negbinom <- predict(negbinom_STEP1Model , newdata=data.test, type='response')
+
+model5coefficients<-summary(negbinom_STEP1Model)$coefficients
+
+#DemoModel.pred <- ifelse(negbinom_STEP1Model  > 0.5,1,0)
+
+#cm1<-confusionMatrix(data=DemoModel.pred, reference=data.test$TARGET)
+
+#accuracy1<-cm1$overall["Accuracy"]
+
+#recall1 <- cm1$byClass['Sensitivity']
+
+#specificity1 <- cm1$byClass['Specificity']
+
+#precision1 <- cm1$byClass['Pos Pred Value'] 
+
+#f_measure1 <- 2 * ((precision1 * recall1) / (precision1 + recall1))
+
+#```
+
+
+#```{r echo=FALSE}
+
+#logmod.diag <- glm.diag(predEvalSTEP1negbinom)
+
+#glm.diag.plots(predEvalSTEP1negbinom , logmod.diag)
+
+#predEvalSTEP1negbinom
+
+
+#SKIPS THE PREDICTION STEP#
+
+plot(predEvalSTEP1negbinom)
+
+#```
+
+
+Discussion of model:
+
+
+While using the same variables as the forward stepwise model, the negative binomial model does not fit the data as well. This indicates it is not a valid model.
+
+
+
+###MODEL BASED ON WINE INDICATIVES
+
+The second negative binary logit model was selected based on various indicative variables for wine, such as the Acidity, Residual Sugar, Alcohol, and pH levels. 
+
+
+#```{r echo=FALSE, message=FALSE, results='hide'}
+
+negbinom_wineindicative <- trainingdata%>% dplyr::select(TARGET, FixedAcidity, VolatileAcidity, CitricAcid, ResidualSugar, Chlorides, FreeSulfurDioxide, TotalSulfurDioxide, Density, pH, Sulphates, Alcohol, AcidIndex, HasSulphates, BoundSulfurDioxide, HighDensity)%>%na.omit()
+
+n <- dim(negbinom_wineindicative)[1]
+
+set.seed(1306)
+
+test <- sample(n, round(n/4))
+
+data.train <- negbinom_wineindicative[-test ,]
+
+data.test <- negbinom_wineindicative[test,]
+
+#http://www.ats.ucla.edu/stat/r/dae/nbreg.htm
+
+negbinomWineIndicativeModel <- glm.nb(TARGET~.,data=data.train)
+
+model6coefficients<-summary(negbinomWineIndicativeModel )$coefficients
+
+predEvalWineIndicative <- predict(negbinomWineIndicativeModel, newdata=data.test, type='response')
+
+##DemoModel.pred <- ifelse(negbinomWineIndicativeModel > 0.5,1,0)
+
+#cm1<-confusionMatrix(data=DemoModel.pred, reference=data.test$TARGET)
+
+#accuracy1<-cm1$overall["Accuracy"]
+
+#recall1 <- cm1$byClass['Sensitivity']
+
+#specificity1 <- cm1$byClass['Specificity']
+
+#precision1 <- cm1$byClass['Pos Pred Value'] 
+
+#f_measure1 <- 2 * ((precision1 * recall1) / (precision1 + recall1))
+
+#```
+
+
+#```{r echo=FALSE}
+
+#logmod.diag <- glm.diag(negbinomWineIndicativeModel )
+
+#glm.diag.plots(negbinomWineIndicativeModel , logmod.diag)
+
+
+#SKIPS THE PREDICTION STEP#
+
+old.par <- par(mfrow=c(1, 2))
+
+plot(negbinomWineIndicativeModel)
+
+par(old.par)
+
+#```
+
+
+Discussion of model:
+
+
+The plots highlight a dramatic skew and indicates that the model does not appropriately fit the data.
+
+
+
+
+***
+
+
+#SELECT MODELS 
+
+
+#```{r echo=FALSE, message=FALSE}
+
+
+#model1:quasipoissonModel
+
+#model2:psmodel2
+
+#model3:full_results
+
+#model4:stepResults_STEP1
+
+#model5:negbinom_STEP1Model
+
+#model6:negbinomWineIndicativeModel
+
+
+#Classification error calculation
+
+trainingdata$predQuasiPoisson<-predict(quasipoissonModel,trainingdata,type='response')
+
+trainingdata$predPoisson<-predict(psmodel2,trainingdata,type='response')
+
+trainingdata$predFull<-predict(full_results,trainingdata,type='response')
+
+trainingdata$predStep<-predict(stepResults_STEP1,trainingdata,type='response')
+
+#trainingdata$predNegbinom1<-predict(negbinom_STEP1Model,trainingdata,type='response')
+
+#trainingdata$predNegbinom2<-predict(negbinomWineIndicativeModel,trainingdata,type='response')
+
+
+#errCalc
+
+err1 <- the.classif.err.rate(trainingdata, "predQuasiPoisson")
+
+err2 <- the.classif.err.rate(trainingdata,"predPoisson")
+
+err3 <- the.classif.err.rate(trainingdata, "predFull")
+
+err4 <- the.classif.err.rate(trainingdata, "predStep")
+
+#err5 <- the.classif.err.rate(trainingdata,"predNegbinom1")
+
+#err6 <- the.classif.err.rate(trainingdata, "predNegbinom2")
+
+
+#ROC / AUC calculation
+
+rocModel1 <- roc(TARGET~predQuasiPoisson, trainingdata)
+
+rocModel2 <- roc(TARGET~predPoisson, trainingdata)
+
+rocModel3 <- roc(TARGET~predFull, trainingdata)
+
+rocModel4 <- roc(TARGET~predStep, trainingdata)
+
+#rocModel5 <- roc(TARGET~predNegbinom1, trainingdata)
+
+#rocModel6 <- roc(TARGET~predNegbinom2, trainingdata)
+
+aucModel1 <- auc(rocModel1)
+
+aucModel2 <- auc(rocModel2)
+
+aucModel3 <- auc(rocModel3)
+
+aucModel4 <- auc(rocModel4)
+
+#aucModel5 <- auc(rocModel5)
+
+#aucModel6 <- auc(rocModel6)
+
+
+selectStatistics <- matrix(c(err1,aucModel1,err2,aucModel2,err3,aucModel3,err4,aucModel4),ncol=2)
+
+
+rownames(selectStatistics) <- c('Model 1', 'Model 2', 'Model 3','Model 4')
+
+colnames(selectStatistics) <- c('CER','AUC')
+
+
+
+
+
+#```
+
+
+#```{r echo=FALSE, message=FALSE, results='hide'}
+
+rocModel1 <- roc(factor(TARGET) ~ predQuasiPoisson, data=trainingdata)
+
+rocModel2 <- roc(factor(TARGET) ~ predPoisson, data=trainingdata)
+
+rocModel3 <- roc(factor(TARGET) ~ predFull, data=trainingdata)
+
+rocModel4 <- roc(factor(TARGET) ~ predStep, data=trainingdata)
+
+#rocModel5 <- roc(factor(TARGET) ~ predNegbinom1, data=trainingdata)
+
+#rocModel6 <- roc(factor(TARGET) ~ predNegbinom2, data=trainingdata)
+
+#```
+
+
+
+#```{r echo=FALSE}
+
+par(mfrow=c(2,2))
+
+hist(quasipoissonModel$coefficients,main="quasipoissonModel coef", col="red",breaks=20)
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+hist(psmodel2$coefficients,main="psmodel2 coef", col="red",breaks=20)
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+hist(negbinom_STEP1Model$coefficients,main="negbinom_STEP1Model coef", col="red",breaks=20)
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+hist(negbinomWineIndicativeModel$coefficients,main="negbinomWineIndicativeModel coef", col="red",breaks=20)
+
+box(col = 'black')
+
+grid(NA, 5,col="black")
+
+
+bestModel=quasipoissonModel
+
+#```
+
+
+The Quasi poisson Model (model 1) was selected from the poisson and negative binomial model due to the following factors:
+
+
+Lower mean p-values
+
+
+Overdispersion corrected
+
+
+In comparison against its other poisson counterpart (model 2), it has a lower classified error rate
+
+
+While not the lowest AUC, it was not so significantly different to change the selection.
+
+
+#```{r echo=FALSE}
+
+pander(selectStatistics)
+
+par(mfrow=c(2,2))
+
+plot(rocModel1,main="Quasi-Poisson Model")
+
+plot(rocModel2,main="Poisson Model")
+
+plot(rocModel3,main="Full Selection Model")
+
+plot(rocModel4,main="Forward Stepwise Model")
+
+#plot(rocModel5,main="Negative Binomial Model 1")
+
+#plot(rocModel6,main="Negative Binomial Model 2")
+
+par(mfrow=c(1,1))
+
+#```
+
+
+***
+
+
+
+##EVALUATION DATA
+
+Run evaluation data through the selected model. Make predictions. Make sure we include appropriate transformations / calculations. 
+
+
+##Data transformations
+
+
+Evaluation data was treated to the same variable transformations as the original training data set.
+
+
+#```{r echo= FALSE, message=FALSE}
+
+evaldata <- evaluationData
+
+
+evaldata$AcidIndex <- log(evaldata$AcidIndex)
+
+evaldata$HasSulphates <-ifelse(is.na(evaldata$Sulphates), 0,1)
+
+evaldata$Sulphates <-ifelse(is.na(evaldata$Sulphates), 0,evaldata$Sulphates)
+
+evaldata$HasRating <-ifelse(is.na(evaldata$STARS), 0,1)
+
+evaldata$STARS <-ifelse(is.na(evaldata$STARS), mean(evaldata$STARS,na.rm=TRUE),evaldata$STARS)
+
+
+numNAs <- apply(evaldata, 1, function(z) sum(is.na(z)))
+
+evaldata<-evaldata[!(numNAs > 1),]
+
+for(i in 1:ncol(evaldata)){
+
+  evaldata[is.na(evaldata[,i]), i] <- mean(evaldata[,i], na.rm = TRUE)
+
+}
+
+
+evaldata$BoundSulfurDioxide <- evaldata$TotalSulfurDioxide - evaldata$FreeSulfurDioxide
+
+evaldata$HighDensity <- ifelse(evaldata$Density < .99, 0,1)
+
+
+evaldata$LabelAppealn1 <- ifelse(evaldata$LabelAppeal == -2, 1,0)
+
+evaldata$LabelAppealn2 <- ifelse(evaldata$LabelAppeal == -1, 1,0)
+
+evaldata$LabelAppeal1 <- ifelse(evaldata$LabelAppeal == 1, 1,0)
+
+evaldata$LabelAppeal2 <- ifelse(evaldata$LabelAppeal == 2, 1,0)
+
+evaldata%>%dplyr::select(-TARGET)
+
+#predictions using best model
+
+
+evaldata$PTARGET <- predict(bestModel, newdata=evaldata, type='response')
+
+
+#```
+
+
+The quasipoisson model was used to predict cases sold using the evaluation data. A sample of those predicted values are shown below.
+
+
+#```{r}
+
+head(evaldata) #Overview of the data
+
+
+#```    
+
+
+Applying our chosen model to the evaluation data we found the mean of the predicted values was `r mean(evaldata$PTARGET)` with a standard deviation of `r sd(evaldata$PTARGET)`. This can be compared to the mean and standard deviation of the training data set used to create the model of `r meanResponse` and `r sdResponse`
+
+
+
+```
+
+
