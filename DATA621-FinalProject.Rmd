@@ -1,0 +1,788 @@
+---
+title: "DATA 621 - Final Project - Primers to Political Conflict"
+author: "Cheryl Bowersox, Christopher Martin, Robert Sellers, Edwige Talla Badjio"
+date: "July 21, 2016"
+fontsize: 11pt
+output:
+  html_document:
+    fig_caption: yes
+    force_captions: yes
+    highlight: pygments
+    number_sections: yes
+    theme: united
+    toc: no
+  pdf_document:
+    fig_caption: yes
+    highlight: pygments
+    latex_engine: xelatex
+    number_sections: yes
+    toc: no
+csl: mee.csl
+Title2: Primers to Political Conflict
+---
+
+#ABSTRACT
+
+Among the greatest challenges we face is understanding conflict and finding methods to prevent it from occurring. Using binary regression techniques on political data characteristics the following research methodology results in the ability to predict the risk for outbreak of war for a nation within 1-2 years of occurrence based on known global conflicts between 1975 and 2015.  A series of models were built using a variety of techniques in order to select the most significant political predictors of conflict. Conflict originates from a vast number of variables, however there is certainly a political component to recognize. However, given this highly variable context, a risk analysis was conducted on the binary logistic regression model, as the binary threshold requires additional data sources beyond political context.  
+
+Our preferred model suggests that there may be a relationship between the beginning of conflict and certain political attributes, such as the total number of seats in legislature, closed list voting, and local authority. There are limits to predicting war using political context alone and the topic demands integrations with other sociologic, spatial, religious, and historical contexts in order to be more aptly understood. Politics plays a role but its expression with regards to conflict requires added dimension.
+
+***
+
+#KEY WORDS
+
+War, Peace, Government, Politics, Predictive
+
+***
+
+#INTRODUCTION
+
+The UCDP (Uppsala Conflict Data Program) defines conflict as: "a contested incompatibility that concerns government and/or territory where the use of armed force between two parties, of which at least one is the government of a state, results in at least 25 battle-related deaths." In this report, we seek to find the characteristics that preclude and promote conflict, and see how these characteristics can change political systems around the world. The data sources used are the Database of Political Institutions [1] which "presents institutional and electoral results data such as measures of checks and balances, tenure and stability of the government, identification of party affiliation and ideology, and fragmentation of opposition and government parties in the legislature, among others", and the Uppsala Conflict Data Program (UCDP) and International Peace Research Institute of Oslo's (PRIO) Armed Conflict Dataset [2] which contains a "dataset of armed conflicts, both internal and external, in the period 1946 to the present."
+
+***
+
+#LITERATURE REVIEW
+
+The work we are presenting here is similar to  Hegre Håvard's 'Predicting Armed Conflict, 2010-2050 [8] which predicts the future development of the incidence of internal armed conflict up to 2050. The prediction use a dynamic multinomial logit model. The model itself is based on armed conflicts data from 1970-2008. It performs a prediction of changes in global and regional incidences of armed conflict for the 2008-2050 period. The authors first built six models and select the best one using criteria like AUC (Area Under the Curve), ROC (Receiver Operating Characteristic), R-squared, comparing predictions to observations for years 2001-2008. We are using a newer version of the conflict dataset used by the authors. Another difference between our works is that the authors are using two other data sources: demographic and educational data to make the predictions. For our case, we are using a political dataset. The variables used in both works are not the same.
+
+Other researchers studying conflict data used hypothesis testing and data modeling to determine the influence of ethnic politics [6] using a multi-step approach, each step focusing on more specific questions.  One advantage to this approach was the ability to use the broader models to determine the validity and focus of additional research. They used the standard binary model to predict the beginning of conflict, and evaluated the significance of the coefficients to create explanations of the impactful variables. Additionally, this research addressed the effect of time on the model, and controlled for this using a time-dependant variable which did not significantly impact the models. 
+
+
+
+***
+
+#METHODOLOGY
+
+The method used in this paper is a binary logistic regression. We isolate years during which war begins and we predict the potential for violent conflict using simple regression techniques. Each record inside the UCDP dataset represents a conflict inside a range of dates. The unique conflicts are identified and the year of conception is isolated as a positive (1) date at the outset of war. The remaining values are calculated as null (0).  The data is then joined against the political characteristic database, thereby providing further null (or 0) binary results for years at peace.
+
+Our research seeks to build multiple models from differing methods and test them against the a random, reproducible sample of the data. The trial models include an automated stepwise procedure, a selective binary logistic model, and a full binary logistic model. It is with this diversity of methods that we build a secondary analysis; a test and comparison of model efficacy using predictive tests and the deriving of success through various metrics for each model. The model is selected from the most successful  predictive test, success defined as exhibiting the most favorable predictive metrics (e.g. accuracy, specificity and sensitivity), and success at determining true positives. 
+
+Based upon early model results, it was apparent that an 'absolute' model of binary selection was insufficient at predicting conflict. Therefore a risk measure was applied to our model, allowing for the ability to capture an instance of war likely to be too variable to be 'absolutely' determined. From our models we discovered repeating significance between models, however highly limited in their ability to predict. By lowering the prediction thresholds, a measure of risk was determinable. 
+
+```{r message=FALSE, echo=FALSE}
+#install packages - this will not be shown
+
+########load packages#######
+suppressWarnings(library(readstata13))
+suppressWarnings(library(lubridate)) #nice dates
+suppressWarnings(library(plyr))
+suppressWarnings(library(tidyr))
+suppressWarnings(library(stringr))
+suppressWarnings(library(dplyr))
+suppressWarnings(library(data.table))
+suppressWarnings(library(caret))#confusion matrix
+suppressWarnings(library(knitr))#html tables
+suppressWarnings(library(faraway))#VIF / sumary
+suppressWarnings(library(boot))#glm model diagnostics
+suppressWarnings(library(pROC))#ROC
+
+########load data#######
+politicalDB <- suppressWarnings(read.dta13("https://github.com/cherylb/IS621Group4/blob/master/DPI2015.dta?raw=true"))
+
+conflictData<-read.csv("https://raw.githubusercontent.com/cherylb/IS621Group4/master/124920_1ucdpprio-armed-conflict-dataset_v.4-2015_fixed.csv")
+
+########preserve data#######
+conflictDataOriginal<-conflictData
+politicalDBOriginal<-politicalDB
+
+
+########percent conversion#######
+percent <- function(x, digits = 2, format = "f", ...) {
+  paste0(formatC(100 * x, format = format, digits = digits, ...), "%")
+}
+```
+
+***
+
+##DATA EXPLORATION
+
+###SUMMARY STATISTICS
+
+####CONFLICT DATASET
+```{r message=FALSE, echo=FALSE, results='hide'}
+str(conflictData)
+```
+
+
+The UCDP/PRIO conflict dataset is comprised of `r nrow(conflictData)` total years of conflict for `r length(unique(conflictData$ConflictId))` wars. The range of dates are post World War 2, from `r min(conflictData$Year)` to ` r max(conflictData$Year)`. There is a gradual increase in conflict over time, followed by a pronounced decline at about `r median(conflictData$Year)`. The mean date is around `r round(mean(conflictData$Year),0)`. The data constitutes 5 different regions: Asia, the Americas, Europe, Africa, and the Middle East. 
+
+```{r echo= FALSE, fig.width=18,fig.height=9}
+par(mfrow=c(1,2))
+hist(conflictData$Year,main="Conflict Over Time", col="darkgrey",breaks=20,xlab="")
+box(col = 'black')
+grid(NA, 5,col="black")
+#countries frequency table of total conflicts
+fix<-subset(conflictData,Location!='Myanmar (Burma)')
+fix$Location <- factor(fix$Location)
+barplot(tail(sort(table(fix$Location)),10),main="Nations at War (Freq)",col="darkgrey",horiz=TRUE,las=1)
+box(col = 'black')
+regionSummary<-ifelse(conflictData$Region == 1, 'Europe', ifelse(conflictData$Region == 2, 'MiddleEast', ifelse(conflictData$Region == 3, 'Asia', ifelse(conflictData$Region == 4, 'Africa', ifelse(conflictData$Region == 5, 'Americas','')))))
+typeSummary<-ifelse(conflictData$TypeOfConflict == 1, 'extrasystemic', ifelse(conflictData$TypeOfConflict == 2, 'interstate', ifelse(conflictData$TypeOfConflict == 3, 'internal', ifelse(conflictData$TypeOfConflict == 4,  'internationalized', ''))))
+knitr::kable(t(as.matrix(table(typeSummary))),caption = ' Conflict Frequency By Region')
+knitr::kable(t(as.matrix(table(regionSummary)))[1,2:6],caption = 'Conflict Frequency By Type')
+#Countries frequency table
+locationFreq<-conflictData %>% group_by(Location) %>% tally()
+```
+
+####POLITICAL DATASET
+```{r message=FALSE, echo=FALSE, results='hide'}
+str(politicalDB)
+poliMil<-t(as.matrix(table(politicalDB$military)))[1,3]/t(as.matrix(table(politicalDB$military)))[1,2]
+poliAuton<-t(as.matrix(table(politicalDB$auton)))[1,3]/t(as.matrix(table(politicalDB$auton)))[1,2]
+poliFraud<-t(as.matrix(table(politicalDB$fraud)))[1,3]/t(as.matrix(table(politicalDB$fraud)))[1,2]
+```
+
+The years of political data provided are from `r min(politicalDB$year)` to `r max(politicalDB$year)`; a range that differs from the conflict dataset. The number of countries analysed is `r nrow(locationFreq)`. The  Database of Political Institutions is a far more expansive dataset, with `r ncol(politicalDB)` columns. For orientation and comprehension, here are some basic statistics available:
+
+Percentage of executive leaders with military experience: `r percent(poliMil)`
+
+Proportion of nations with autonomous regions: `r percent(poliAuton)`
+
+Proportion where fraud was considered to have been used to win the election: `r percent(poliFraud)`
+
+
+###SPECIAL CODING FOR MISSING VALUES
+Some special codes were used in the initial data sets for identifying missing values.
+
+Conflict data: -99
+
+Political data: "NA" or "-999" for numeric variables
+
+After exploration of the datasets, we proceed with data cleaning in order to obtain a tidy dataset. 
+
+***
+
+###DATA TIDYING
+The main objective of this step was to make sure that the common attributes have same spelling/case for both datasets (for join).
+
+```{r message=FALSE, echo=FALSE}
+########tidy data#######
+#duplicate rows per combatant
+conflictData.tidy<-conflictDataOriginal %>% 
+    mutate(Location=strsplit(as.character(Location), ",")) %>% 
+    unnest(Location)
+
+conflictData.tidy$Location<-str_trim(conflictData.tidy$Location, "left")
+conflictData.tidy$Location <- as.factor(conflictData.tidy$Location)
+politicalDB.tidy<-politicalDB
+politicalDB.tidy$countryname <- as.factor(politicalDB.tidy$countryname)
+
+#make sure year and country are the same spelling/case for both datasets
+names(politicalDB.tidy)[names(politicalDB.tidy) == 'countryname'] <- 'Location'
+names(politicalDB.tidy)[names(politicalDB.tidy) == 'year'] <- 'Year'
+
+#ensure nations are equal in both datasets (for join)
+conflictData.tidy$Location<-revalue(conflictData.tidy$Location, c(
+  "Myanmar (Burma)"="Myanmar",
+  "Russia (Soviet Union)" ="Russia",
+  "Serbia (Yugoslavia)"  ="Serbia",
+  "Madagascar (Malagasy)" ="Madagascar",
+  "Cambodia (Kampuchea)" = "Cambodia",
+  "Zimbabwe (Rhodesia)" ="Zimbabwe",
+  "DR Congo (Zaire)" ="Zaire",
+  "Bosnia-Herzegovina"="Bosnia-Herz",
+  "Central African Republic"="Cent. Af. Rep.",
+  "Ivory Coast"="Cote d'Ivoire",
+  "China"="PRC",
+  "North Korea"="PRK",
+  "Papua New Guinea"= "P. N. Guinea",
+  "FYR"="Yugoslavia"
+  ))
+
+politicalDB.tidy$Location<-revalue(politicalDB.tidy$Location, c(
+"Soviet Union"= "Russia",
+"S. Africa"="South Africa",
+"Yemen (AR)"="Yemen (North Yemen)",
+"Yemen (PDR)"="South Yemen",
+"USA"="United States of America",
+"UK"="United Kingdom",
+"Dom. Rep."= "Dominican Republic",
+"ROK"="South Korea",
+"Comoro Is."="Comoros"
+  ))
+```
+
+
+####CONTENTS OF THE CONFLICT DATASET
+
+[The Codebook](http://www.pcr.uu.se/digitalAssets/124/124920_1codebook_ucdp_prio-armed-conflict-dataset-v4_2015.pdf) contains in depth discussion on the methodology and motivations of the UCDP/PRIO Armed Conflict Data set, but high-level snippits of the codebook can be found in the Appendix.
+
+Some of the variables are currently set to a numerical value, which makes it difficult to understand at a quick glance. Categorical descriptions have been added to the following fields to explain their numerical counterparts:
+
+- Incomp (Issue of the Conflict)
+- Intensity Level
+- Type of Conflict
+- Start Date Preciseness
+- Start Date Preciseness 2
+- End Date Preciseness
+- Region
+
+```{r echo=FALSE}
+#Incomp categories
+conflictData.tidy$IncompDescript<-ifelse(conflictData.tidy$Incomp == 1, 'territory', ifelse(conflictData.tidy$Incomp == 2, 'government', ifelse(conflictData.tidy$Incomp == 3, 'territory and government', '')))
+
+#Int = IntensityLevel
+conflictData.tidy$IntensityLevelDescript<-ifelse(conflictData.tidy$IntensityLevel == 1, 'minor', ifelse(conflictData.tidy$IntensityLevel == 2, 'war', ''))
+
+#Type = Type of Conflict
+conflictData.tidy$TypeOfConflictDescript<-ifelse(conflictData.tidy$TypeOfConflict == 1, 'extrasystemic', ifelse(conflictData.tidy$TypeOfConflict == 2, 'interstate', ifelse(conflictData.tidy$TypeOfConflict == 3, 'internal', ifelse(conflictData.tidy$TypeOfConflict == 4,  'internationalized', ''))))
+
+#Startprec = Preciseness of start date
+conflictData.tidy$StartPrecDescript<-ifelse(conflictData.tidy$StartPrec == 1, 'precise', ifelse(conflictData.tidy$StartPrec == 2, 'dayassigned', ifelse(conflictData.tidy$StartPrec == 3, 'dayunknown', ifelse(conflictData.tidy$StartPrec == 4, 'monthassigned', ifelse(conflictData.tidy$StartPrec == 5, 'yearprecise', ifelse(conflictData.tidy$StartPrec == 6, 'yearassigned', ifelse(conflictData.tidy$StartPrec == 7, 'yearmissing', '')))))))
+
+#Startprec2 = Preciseness of start date 2
+conflictData.tidy$StartPrec2Descript<-ifelse(conflictData.tidy$StartPrec2 == 1, 'precise', ifelse(conflictData.tidy$StartPrec2 == 2, 'dayassigned', ifelse(conflictData.tidy$StartPrec2 == 3, 'dayunknown', ifelse(conflictData.tidy$StartPrec2 == 4, 'monthassigned', ifelse(conflictData.tidy$StartPrec2 == 5, 'yearprecise', ifelse(conflictData.tidy$StartPrec2 == 6, 'yearassigned', ifelse(conflictData.tidy$StartPrec2 == 7, 'yearmissing', '')))))))
+
+#EpEndPrec = Preciseness of Enddate
+conflictData.tidy$EpEndPrecDescript<-ifelse(conflictData.tidy$EpEndPrec == 1, 'precise', ifelse(conflictData.tidy$EpEndPrec == 2, 'dayassigned', ifelse(conflictData.tidy$EpEndPrec == 3, 'dayunknown', ifelse(conflictData.tidy$EpEndPrec == 4, 'monthassigned', ifelse(conflictData.tidy$EpEndPrec == 5, 'yearprecise', ifelse(conflictData.tidy$EpEndPrec == 6, 'yearassigned', ifelse(conflictData.tidy$EpEndPrec == 7, 'yearmissing', '')))))))
+
+#Region
+conflictData.tidy$RegionDescript<-ifelse(conflictData.tidy$Region == 1, 'Europe', ifelse(conflictData.tidy$Region == 2, 'MiddleEast', ifelse(conflictData.tidy$Region == 3, 'Asia', ifelse(conflictData.tidy$Region == 4, 'Africa', ifelse(conflictData.tidy$Region == 5, 'Americas', '')))))
+```
+
+Dummy Variables in the dataset:
+- CumulativeIntensity (0 = <1,000 battle related deaths)
+- EpEndDate (1 = conflict is inactive the following year)
+
+With the addition of the newly created description columns, the conflict dataset contains `r ncol(conflictData.tidy)` columns and `r nrow(conflictData.tidy)` rows.
+
+
+####CONTENTS OF POLITICAL DATA
+
+The political dataset has `r ncol(politicalDB.tidy)` columns and `r nrow(politicalDB.tidy)`. The [Codebook](https://github.com/RobertSellers/621_BUSINESS/blob/master/DPI2015_Codebook.pdf) contains a deeper explaination of what is in the dataset however some definitions were added to the Appendix.
+
+***
+
+##DATA PREPARATION
+
+###COMBINED DATASET
+
+The tidied datasets were combined into a single dataset by joining the tables at their matched country (Location) and years. A limitation in the political dataset is that the first year tracked is `r min(politicalDB.tidy$Year)` while the conflict dataset is tracked from `r min(conflictData.tidy$Year)`, so all years prior to `r min(politicalDB.tidy$Year)` are removed. The one-to-many join eliminates the availability of many of the conflict variables. The characteristics of each war are not applicable to the process of predicting a war, given the political status at a given date. Provided a successful model of predicting wars themselves, it would be possible to expound into the specific nature of each conflict, as provided by the Uppsala Conflict Data.
+
+It is often the case that wars have various alliances and support. Take for example various NATO conflicts in the middle-east, with certain nations pledging minor support. Only those nations or players of primary involvement are available and were selected. It was found that, without many exceptions, the nations listed in both datasets could be easily paired with one another, however some research and modification was required with many of the balkanized regions (i.e. Yemen, Yugoslavia, Soviet Union) or changed names such as Rhodesia or Kampuchea. 
+
+
+```{r echo=FALSE}
+########merge data#######
+
+#combining / outer joining the datasets by country and year
+mergeData.tidy<-merge(conflictData.tidy, politicalDB.tidy, by = c("Location","Year"), all = TRUE)
+
+#drop all values prior to 1975
+mergeData.tidy<- mergeData.tidy[ which(mergeData.tidy$Year>1974),]
+```
+
+```{r message=FALSE, echo=FALSE}
+#######STATISTICS AND SUBSETS#######
+
+
+#binary identify the years where a conflict begins #
+df_temp <- na.omit(mergeData.tidy %>% select(Location,ConflictId,StartDate)%>% distinct(Location,ConflictId,StartDate)%>%mutate(Year = year(StartDate),Flag = 1))
+df_temp <- rbind(df_temp, df_temp%>%mutate(Year = Year - 1)) # adding one year before
+x <- paste(mergeData.tidy$Location,mergeData.tidy$Year)
+y <- paste(df_temp$Location,df_temp$Year)
+mergeData.tidy$conflictBegin <- df_temp$Flag[match(x,y)]
+mergeData.tidy$conflictBegin <- ifelse(is.na(mergeData.tidy$conflictBegin),0,mergeData.tidy$conflictBegin)
+
+#binary HasConflict - doing this after we flag conflict begi - we want to flag any begin years as conflict
+mergeData.tidy$conflictFlag <- ifelse(is.na(mergeData.tidy$ConflictId) | mergeData.tidy$conflictBegin == 1,0,1)
+```
+
+```{r echo=FALSE}
+
+#Years peace messy code that calculates the years since last conflict using conflict flag. 
+#This code works but runs very slow. Not perfect but does 
+#sort data 
+mergeData.tidy <- mergeData.tidy%>%arrange(Location, Year)
+#set some initial values
+n <- nrow(mergeData.tidy)
+countYear <- 1
+country <- mergeData.tidy$Location[1]
+prioryear<- mergeData.tidy$Year[1]-1
+yearsPeace <- c()
+i <- 1
+for(i in 1:n){
+  if(mergeData.tidy$Location[i] == country){
+  	yearsPeace <- c(yearsPeace, countYear) #if same country append prior count to vector
+ 	 
+  	if((mergeData.tidy$conflictFlag[i] == 0) && (mergeData.tidy$Year[i] > prioryear)){
+ 
+      	countYear <- countYear +1  #if peace this year and is new year add 1 to count
+     	 
+  	}else{
+      	countYear <- 0   # if no peace set count to zero
+     	 
+  	}
+ 	 
+  }else{
+ 	country <- mergeData.tidy$Location[i] # new country set
+ 	countYear <- 1  #assume last year was peaceful for new country - not in data
+ 	yearsPeace <- c(yearsPeace, countYear) # append to vector
+	 
+ 	if(mergeData.tidy$conflictFlag[i] == 0){
+      	countYear <- countYear +1  #if peace this year add 1 to count
+  	}else{
+      	countYear <- 0   # if no peace set count to zero
+  	}
+  }
+  	prioryear <- mergeData.tidy$Year[i]
+  	i <- i +1  
+}
+# add to data frame
+mergeData.tidy$yearsPeace <- yearsPeace
+
+# write to csv - bring it back later
+# write.csv(mergeData.tidy,"mergeData_export.csv")
+# bring it back  - already saved 
+# mergeData.tidy <- read.csv("https://raw.githubusercontent.com/cherylb/IS621Group4/master/mergeData_export.csv")
+
+```       	                         
+
+
+###MISSING VALUES
+
+```{r echo= FALSE, message=FALSE}
+missingData<-t(as.matrix(sapply(mergeData.tidy,function(x) sum(is.na(x)))/nrow(mergeData.tidy)))
+hist(missingData[35:length(missingData)],col="lightgrey",breaks=20,xlab="Percent Missing", main='Missing Values',ylab="Number of Predictors",xlim=c(0,1))
+box(col = 'black')
+grid(NA, 5,col="black")
+```
+
+From the Conflict Codebook: Note: With a few exceptions (noted below) the event where no  information was available the cells were left blank whereas in the case where the information was not applicable cells were marked with "NA" or "-999" for numeric variables. NA is recorded in the following cases:  when a country is a colony, even if it has internal self-government within a commonwealth; for the Soviet Republics while they were part of  the  USSR; for countries in the midst of civil war or political crisis.
+
+From the Political database Codebook: NA is recorded in the following cases: when a country is a colony, even if it has internal self-government within a commonwealth; for the Soviet Republics while they were part of the USSR; for countries in the midst of civil war or political crisis.
+
+
+
+###VARIABLE TRANSFORMATION
+
+A new variable, yearsPeace was created calculating the years of peace preceding the current year. This variable was introduced to help account for the possible time-dependent nature of the conflict data.  
+
+For the subset of data used in the selective binary logistic model, the large amount of missing or null values for binary variables set to zero. This changes the meaning of the variables, only the value of '1' has meaning and can be interpreted in original context, the values of 0 are ambiguous - meaning everything that is not '1'. This should be kept in mind when interpreting coefficients. Other data rows were dropped when containing null values. 
+
+```{r echo= FALSE, message=FALSE}
+##############transformations###########
+#################model 1################
+########################################
+
+trainingdata.set1 <-mergeData.tidy%>% dplyr::select(conflictBegin, Location, system, military,prtyin,execrurl ,execage,allhouse,totalseats,numvote,oppvote, pluralty,housesys,cl,stconst,auton, author,yearsPeace)
+
+#handle some -999 and NA's for binary variables set to zero. This changes the meaning of the variables - only the value of '1' has meaning - values of 0 are ambiguous but if we're modeling the data the coefficient only matters if it's not zero.
+
+trainingdata.set1$author <- ifelse(trainingdata.set1$author == -999,0,trainingdata.set1$author)
+trainingdata.set1$author <- ifelse(is.na(trainingdata.set1$author),0,trainingdata.set1$author)
+
+trainingdata.set1$pluralty <- ifelse(trainingdata.set1$pluralty == -999,0,trainingdata.set1$pluralty)
+trainingdata.set1$pluralty <- ifelse(is.na(trainingdata.set1$pluralty),0,trainingdata.set1$pluralty)
+
+trainingdata.set1$housesys <- ifelse(trainingdata.set1$housesys == -999,0,trainingdata.set1$housesys)
+trainingdata.set1$housesys <- ifelse(is.na(trainingdata.set1$housesys),0,trainingdata.set1$housesys)
+
+trainingdata.set1$cl <- ifelse(trainingdata.set1$cl == -999,0,trainingdata.set1$cl)
+trainingdata.set1$cl <- ifelse(is.na(trainingdata.set1$cl),0,trainingdata.set1$cl)
+
+trainingdata.set1$stconst <- ifelse(trainingdata.set1$stconst == -999,0,trainingdata.set1$stconst)
+trainingdata.set1$stconst <- ifelse(is.na(trainingdata.set1$stconst),0,trainingdata.set1$stconst)
+
+trainingdata.set1$stconst <- ifelse(trainingdata.set1$allhouse == -999,0,trainingdata.set1$allhouse)
+trainingdata.set1$stconst <- ifelse(is.na(trainingdata.set1$allhouse),0,trainingdata.set1$allhouse)
+
+#handle remaining NA's and -999
+trainingdata.set1[trainingdata.set1 == -999] <- NA
+trainingdata.set1<-trainingdata.set1[complete.cases(trainingdata.set1),]
+par(mfrow=c(2,2))
+
+```
+
+
+```{r echo= FALSE, fig.width=18,fig.height=9}
+old.par <- par(mfrow=c(1, 2))
+hist(trainingdata.set1$prtyin,main="prtyin before", col="red",breaks=20)
+box(col = 'black')
+grid(NA, 5,col="black")
+hist(log(trainingdata.set1$prtyin)
+,main="prtyin after", col="red",breaks=20)
+box(col = 'black')
+grid(NA, 5,col="black")
+trainingdata.set1$prtyin<-log(trainingdata.set1$prtyin)
+par(old.par)
+```
+Transformations:
+prtyin  (a log taken for a right-skew)
+
+```{r echo= FALSE, fig.width=18,fig.height=9}
+old.par <- par(mfrow=c(1, 2))
+hist(trainingdata.set1$execage,main="execage before", col="red",breaks=20)
+box(col = 'black')
+grid(NA, 5,col="black")
+trainingdata.set1$execage[trainingdata.set1$execage==0]<-0.1
+trainingdata.set1$execage<-log(trainingdata.set1$execage)
+hist(trainingdata.set1$execage,main="execage after", col="red",breaks=20)
+box(col = 'black')
+grid(NA, 5,col="black")
+hist(trainingdata.set1$totalseats,main="totalseats before", col="red",breaks=20)
+box(col = 'black')
+grid(NA, 5,col="black")
+#convert 0 to .01 and log
+trainingdata.set1$totalseats[trainingdata.set1$totalseats==0]<-0.1
+trainingdata.set1$totalseats<-log(trainingdata.set1$totalseats)
+
+hist(trainingdata.set1$totalseats,main="totalseats after", col="red",breaks=20)
+box(col = 'black')
+grid(NA, 5,col="black")
+par(old.par)
+```
+*Transformations:*
+
+Execage (a log taken for a right-skew)
+
+totalseats (a log taken for a right-skew)
+
+numvote & oppvote (a ratio was calculated and a new variable, 'voteratio' was created due to their linear relationship. A log transformation was then applied.)
+
+```{r echo= FALSE}
+old.par <- par(mfrow=c(1, 2))
+#dummy variable - has oposition vote
+trainingdata.set1$hasOpvote <- ifelse(trainingdata.set1$oppvote == 0,0,1)
+#mosaicplot(trainingdata.set1$hasOpvote~trainingdata.set1$conflictBegin,main = "Has Opposition Vote",xlab = "", ylab="TARGET", cex = 0.75, color = TRUE)
+t.test(formula = trainingdata.set1$hasOpvote~trainingdata.set1$conflictBegin)
+
+
+trainingdata.set1$oppvote[trainingdata.set1$oppvote==0]<-0.1
+trainingdata.set1$numvote[trainingdata.set1$numvote==0]<-0.1
+trainingdata.set1$voteratio<-log(trainingdata.set1$oppvote/trainingdata.set1$numvote)
+#hist(trainingdata.set1$voteratio,main="voteratio", col="red",breaks=20)
+#box(col = 'black')
+#grid(NA, 5,col="black")
+#par(old.par)
+```
+
+
+```{r echo=FALSE}
+trainingdata.normalset<-mergeData.tidy
+trainingdata.normalset[trainingdata.normalset == -999] <- NA
+
+```
+
+##BUILD MODELS
+
+Our research seeks to build multiple models from differing methods. These include an automated stepwise procedure, a selective binary logistic model, and a full binary logistic model. It is with this diversity of methods that we build a secondary analysis; a test and comparison of model efficacy using predictive tests and deriving of success through various  metrics for each model.
+
+
+###MODEL 1: FORWARD STEPWISE BINARY LOGISTIC MODEL
+
+A stepwise approach was performed using a forward AIC (Akaike information criterion) method. The initial predictor set is the same as our above intuition model.
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+#Multiple linear regression using stepwise methodology
+
+trainingdata_STEP1<-trainingdata.set1%>%dplyr::select(-Location)
+
+all<-lm(conflictBegin~.,na.omit(trainingdata_STEP1))
+
+null=lm(conflictBegin~1, na.omit(trainingdata_STEP1))
+stepResults_STEP1<-step(null,scope=list(lower=null,upper=all),direction="forward")
+```
+
+Current optimal results from stepwise method with diagnostic plots
+
+```{r echo=FALSE}
+#stepResults
+sumary(stepResults_STEP1)
+```
+```{r echo=FALSE}
+#test/train
+trainingdata_STEP1_revised <- trainingdata_STEP1%>%select(conflictBegin,+execage,+pluralty,+author,+oppvote,+cl,+prtyin,+housesys,+totalseats,+yearsPeace)
+n <- dim(trainingdata_STEP1_revised)[1]
+set.seed(1306)
+test <- sample(n, round(n/4))
+data.train <- trainingdata_STEP1_revised[-test,]
+data.test <- trainingdata_STEP1_revised[test,]
+
+logitModelStepwise <- glm(conflictBegin ~.,family=binomial(link='probit'),data=data.train)
+#summary(trainingdata_STEP1_revised)
+
+predEvalModelStepwise <- predict(logitModelStepwise ,newdata=data.test,type='response')
+logitModelStepwise.pred <- ifelse(predEvalModelStepwise  > 0.5,1,0)
+ ```
+```{r echo=FALSE, message=FALSE,results='hide'}
+cm2<-confusionMatrix(data=logitModelStepwise.pred, reference=data.test$conflictBegin)
+accuracy2<-cm2$overall["Accuracy"]
+recall2 <- cm2$byClass['Sensitivity']
+specificity2 <- cm2$byClass['Specificity']
+precision2 <- cm2$byClass['Pos Pred Value']
+f_measure2 <- 2 * ((precision2 * recall2) / (precision2 + recall2))
+```
+
+Confusion Matrix:
+
+```{r echo = FALSE}
+kable(cm2$table,caption = "Confusion Matrix")
+```
+
+Discussion of model: 
+
+The model fails to predict at the given threshold. This same issue will reappear in the following model, however the next model was expanded upon with modified threshold values.
+
+
+###MODEL 2: INTUITIVE BINARY LOGISTIC MODEL
+
+The second model is a model of institutional metrics. Please consult with the appendix section entitled Contents of Political Data for details on each variable. Variables that were initially selected out of the large data set as representative of general themes, such as stability and type of government. A model with all the selected predictors was initially created, then refined to exclude those that had low p-values. 
+
+Beginning set of Predictors:
+
+System, military, prtyin, execrurl, execage, allhouse, totalseats, numvote, oppvote, pluralt, housesys, cl, stconst, auton, author, yearsPeace, hasOpvote, voteratio
+    
+Final set of Predictors after elimination: 
+
+Prtyin, execage, allhouse, totalseats, numvote, cl, auton, author, hasOpvote
+
+
+```{r echo = FALSE}
+trainingdata.a <- trainingdata.set1%>%
+  select(-Location, -stconst, -yearsPeace, -oppvote, -pluralty,-housesys,-military, -execrurl, -voteratio, -system)
+n <- dim(trainingdata.a)[1]
+set.seed(1306)
+test <- sample(n, round(n/2))
+data.train <- trainingdata.a[-test,]
+data.test <- trainingdata.a[test,]
+
+logitModel1 <- glm(conflictBegin ~.,family=binomial(link='probit'),data=data.train)
+summary(logitModel1)
+
+
+predEvalModel1 <- predict(logitModel1,newdata=data.test,type='response')
+logitModel1.pred <- ifelse(predEvalModel1 > 0.15,1,0)
+
+logitModel1.pred50 <- ifelse(predEvalModel1 > 0.5,1,0)
+logitModel1.pred25 <- ifelse(predEvalModel1 > 0.25,1,0)
+logitModel1.pred15 <- ifelse(predEvalModel1 > 0.15,1,0)
+logitModel1.pred10 <- ifelse(predEvalModel1 > 0.10,1,0)
+
+
+ 
+cm1<-confusionMatrix(data=logitModel1.pred, reference=data.test$conflictBegin)
+accuracy1<-cm1$overall["Accuracy"]
+recall1 <- cm1$byClass['Sensitivity']
+specificity1 <- cm1$byClass['Specificity']
+precision1 <- cm1$byClass['Pos Pred Value']
+f_measure1 <- 2 * ((precision1 * recall1) / (precision1 + recall1))
+```
+Confusion Matrix:
+
+```{r echo = FALSE}
+kable(cm1$table,caption = "Confusion Matrix")
+```
+
+Discussion of model: 
+At a 15% threshold, our model predicts a success (conflict beginning) when the modeled probability is greater than 15%. The precision,or percentage of the positive predictions that are actually positive, is `r round(precision1,4)`. The sensitivity, the number of actual positive outcomes that were predicted as positive in the model is, `r round(recall1,4)`. However the Kappa value is fairly low, indicating there is not much information gained from the model.
+
+The graphs below shows the probability distribution and the conflicts predicted at varying probability thresholds.  At a 50% threshold the model predicts no conflicts as all probabilities are under 40%.  The number of conflict beginnings calculated in our data set made up around 5% of the total data, so it is not surprising the model did not produce many conflict results. 
+
+
+```{r echo= FALSE, fig.width=18,fig.height=12}
+#model different thresholds
+conflicts <-
+  c(sum(logitModel1.pred50), sum(logitModel1.pred25), sum(logitModel1.pred15), sum(logitModel1.pred10))
+
+names(conflicts) <- c('50percent','25percent', '15percent', '10percent')
+par(mfrow=c(2, 1))
+plot (density(predEvalModel1), col="red",ylim=c(0,25),xlim=c(0,.5),main = 'Probablity of Conflict')
+barplot(conflicts, main="Conflicts Predicted", xlab="Probability Threshold", ylab="Count",
+border="red", density=c(50,25,15,10))
+```
+
+###MODEL 3: FULL BINARY LOGISTIC MODEL
+
+For model2, we have chosen a set of predictors. We are now interested in fitting a maximum likelihood model to our data using more predictors.
+
+```{r echo=FALSE, message=FALSE, results='hide'}
+trainingdata_ALL<-trainingdata.set1%>%dplyr::select(-Location)
+n <- dim(trainingdata_ALL)[1]
+set.seed(1306)
+test <- sample(n, round(n/4))
+data.train <- trainingdata_ALL[-test ,]
+data.test <- trainingdata_ALL[test,]
+logitALLModel <- glm(conflictBegin~.,family=binomial(link='logit'),data=data.train)
+resultSum<- summary(logitALLModel)
+pValues<-sort(resultSum$coefficients[,4])
+
+predEvalAllModel <- predict(logitALLModel,newdata=data.test,type='response')
+AllModel.pred <- ifelse(predEvalAllModel > 0.5,1,0)
+```
+```{r echo=FALSE, message=FALSE,results='hide'}
+cm3<-confusionMatrix(data=AllModel.pred, reference=data.test$conflictBegin)
+accuracy3<-cm3$overall["Accuracy"]
+recall3 <- cm3$byClass['Sensitivity']
+specificity3 <- cm3$byClass['Specificity']
+precision3 <- cm3$byClass['Pos Pred Value'] 
+f_measure3 <- 2 * ((precision3 * recall3) / (precision3 + recall3))
+```
+
+```{r echo=FALSE}
+old.par <- par(mfrow=c(1, 2))
+logmod.diag2 <- glm.diag(logitALLModel )
+glm.diag.plots(logitALLModel , logmod.diag2)
+par(old.par)
+sumary(logitALLModel)
+```
+
+Discussion of model:
+
+For this third model, we can observe that half of the variables have a high p-value and should not be considered as meaningful predictors, and not statistically significant.
+
+***
+
+#DISCUSSION AND CONCLUSIONS
+
+
+```{r echo=FALSE}
+selectStatistics <- matrix(c(accuracy2,recall2 ,specificity2 ,precision2 ,f_measure2,accuracy1,recall1 ,specificity1 ,precision1 ,f_measure1 ,accuracy3,recall3 ,specificity3 ,precision3 ,f_measure3  ),ncol=5)
+
+rownames(selectStatistics) <- c('Model 1', 'Model 2', 'Model 3')
+colnames(selectStatistics) <- c('Accuracy','Recall','Specificity','Precision','F Measure')
+
+knitr::kable(t(selectStatistics),caption = 'Model Metrics')
+```
+
+We evaluated three different models when attempting to model conflict using national political data. There are advantages to each model but the one that would be considered 'best' is model 2, as it details relevant significance that would be helpful towards guiding a more thorough approach which might combine a more diverse predictor set.  Furthermore, given the scarcity of conflict beginnings (5% of the overall data) we conclude that none of the models are truly appropriate to use for predicting outcomes.  The fact that all three different models created had similar significant predictors (totalseats and cl)  with whose coefficients are similarly positive or negative is suggestive of future investigation. If the predictors the models have in common are helpful in accounting for the variability in the data they may play a role in explaining conflict, if not predicting it. 
+
+For future consideration, a diversity of variables is essential to capturing complex scenarios. War is a complex idea and demands to be recognized as such. Not unlike the troubled binary nature of some public opinion on war, an analysis of it itself is troubled when seeking equally simplistic explanations. Likewise, our response variable captures only the inception of conflict and not the temporal dimension. There exists peace, war, complacency, stagnation, among other things. All of these factors require detailed research in order to be expressed and reflected inside a predictive model. However, we recognize value in the repeated significance found from our tested models and to embed them into larger analyses of the subject.
+
+```{r echo=FALSE}
+#for reference
+#summary(logitModelStepwise)
+#summary(logitModel1)
+#summary(logitALLModel)
+```
+***
+
+#REFERENCES
+[1] Database of Political Institutions, (http://www.iadb.org/en/research-and-data/publication-details,3169.html?pub_id=IDB-DB-121, last access July 2016)
+
+[2] Armed Conflict Data set, (https://www.prio.org/Data/Armed-Conflict/UCDP-PRIO/, last access July 2016)
+
+[3] Economic and Political Causes of Conflict: An Overview and Some Policy Implications, (http://www3.qeh.ox.ac.uk/pdf/crisewps/workingpaper81.pdf, last access July 2016)
+
+[4] New tools and new tests in the comparative political economy,(http://siteresources.worldbank.org/INTWBIGOVANTCOR/Resources/wps2283.pdf, last access July 2016)
+
+[5] Democracy in America, Alexis de Tocqueville, vol. 1 (New York: Vintage, 1954).
+
+[6] Ethnic Politics and Armed Conflict: A Configurational Analysis of a New Global Data Set,
+(http://asr.sagepub.com.remote.baruch.cuny.edu/content/74/2/316.full.pdf+html, last access July 2016)
+
+[7] The Conflicts Dataset Codebook, (http://www.pcr.uu.se/digitalAssets/124/124920_1codebook_ucdp_prio-armed-conflict-dataset-v4_2015.pdf, last access July 2016)
+
+[8] Predicting Armed Conflict, 2010-2050, Hegre, Håvard; Håvard Mokleiv Nygård; Håvard Strand; Henrik Urdal; & Joakim Karlsen, International Studies Quarterly 55(2): 1-21 (2013).
+
+
+***
+
+#APPENDICES
+###CONTENTS OF THE CONFLICT DATASET
+
+[The Codebook](http://www.pcr.uu.se/digitalAssets/124/124920_1codebook_ucdp_prio-armed-conflict-dataset-v4_2015.pdf) contains in depth discussion on the methodology and motivations of the Uppsala Conflict Data Program (UCDP) and International Peace Resarch Institue of Oslo's (PRIO) Armed Conflict Data set, but here is a summary:
+
+![Definition of Variables in the Main Conflict Table Part I](https://github.com/RobertSellers/621_BUSINESS/raw/master/image1.png)
+![Definition of Variables in the Main Conflict Table Part II](https://github.com/RobertSellers/621_BUSINESS/raw/master/image2.png)
+
+***
+
+###CONTENTS OF POLITICAL DATA
+
+The [Codebook](https://github.com/RobertSellers/621_BUSINESS/blob/master/DPI2015_Codebook.pdf) contains a deeper explaination of what is in the dataset however here are some of the definitions:
+
+System: 2 Parliamentary, 1 Assembly-elected President, 0 Presidential
+
+yrsoffc: how many years has the chief executive been in office?
+
+finittrm: is there a finite term in office? (1=yes, 0=no)
+
+yrcurnt: years left in current term
+
+multpl: If there are formal restraints on an executive's term (NA if not), can s/he serve additional term(s) following the current one?Deviating from the convention, a 1 is recorded if a term limit is not explicitly stated. Only limits on immediate reelection count. Prime ministers always get "1". (If FINITRM=0, then MULTIPL=NA)
+
+military: is Chief Executive (CE) a military officer?
+
+defmin: is Defense Minister a military officer? (NA=no armed force or no one in cabinet with such responsibility)
+
+percent1: president got what % of votes in the first/only round? NA=system with 1 or 2 or those with a 2 in executive index of electoral compensation
+
+percentl: President got what % of votes in final round? NA for reasons like percent1 or no runoff
+
+prtyin: party of chief executive has been how long in office? Same rules as yrsoffc: NA if there are no parties, if the chief executive is an independent, or if the "party" is the army. In general, the counting restarts from 1 for a party if its name changes. However, in a few cases the sources indicated that party leadership, membership, and platform remained the same following the name change. In these cases, the name change was recorded but the year count did not restart. All of these cases are noted in the database.
+
+execme: name of party (if any); independent of CE is independent, a monarch, in military, or if no parties
+
+execrlc: Right (1); Left (3); Center (2); No information (0); No executive (NA)
+
+execnat: nationalist (1 if yes)
+
+execrurl: rural (1 if yes); if CE is independent, personal orientation is recorded, NA if no executive
+
+execreg: regional (1 if yes) (see above for NA)
+
+execrel: religions (1:Christian, 2: Catholic, 3: Islamic, 4: Hindu, 5: Buddhist, 6: Jewish, 0: otherwise)
+
+execage: time since formation under this name
+
+allhouse does the party executive control all relevant houses?
+
+nonchief: n systems with both non-ceremonial PM and President, what is the party affiliation of the one not called Chief Executive? For parliamentary systems (2 in SYSTEM) with non-ceremonial president: what is the party affiliation of the president? NA if the president is ceremonial or non-existent, or if SYSTEM has a score of 1 or 0.
+
+totalseats: total seats in the legislature
+
+herfgov: Herfindahl Index Government, with NA = no parliment or no parties, blank = unknown seats
+
+govfrac: The probability that two deputies picked at random from among the government parties will be of different parties.
+
+numgov: number of government seats
+
+numvote: vote share of all government parties
+
+gov1me: name of largest government party
+
+gov1seat: seats of largest government party
+
+gov1vote: voteshare of largest government party
+
+gov1rlc: R/L/C/0/NA (largest government party)
+
+gov1nat: nationalist (largest government party)
+
+gov1rural: rural (largest government party)
+
+gov1reg: regional (largest government party)
+
+gov1rel: religion (largest government party)
+
+gov1age: time since formation (largest government party)
+
+^ (abbr. as set of 9) previous 9 repeat for 2nd largest and 3rd largest government parties
+
+govoth: number of other government parties
+
+govothst: seats of other government parties
+
+govothvt: total vote of other government parties
+
+^ (abbr. as set of 3)
+
+heropp: Herfindahl Index Opp.
+
+oppfrac: The probability that two deputies picked at random from among the opposition parties will be of different parties.
+
+numopp: number of opposition seats
+
+oppvote: vote share of opposition parties
+
+(set of 9 repeats for opposition parties: largest, 2nd largest, 3rd largest, and other opposition parties)
+
+(set of 3 repeats for other opposition parties)
+
+ulprty: number of parties of house non-aligned or independents
+
+numul: seats of house non-aligned or independents
+
+ulvote: vote share of house non-aligned or independents
+
